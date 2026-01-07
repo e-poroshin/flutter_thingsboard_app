@@ -1,0 +1,4 @@
+# PATIENT APP: Data Models
+# Place data transfer objects (DTOs) and model classes here
+# These should map to/from JSON and domain entities
+

@@ -1,0 +1,9 @@
+# PATIENT APP: Use Cases
+# Place use case classes here following the pattern:
+# 
+# class FetchPatientHealthUseCase {
+#   final IPatientRepository repository;
+#   Future<PatientHealthSummary> call(String patientId) => 
+#     repository.getPatientHealthSummary(patientId);
+# }
+

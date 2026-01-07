@@ -1,13 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:thingsboard_app/utils/services/provisioning/wifi_connect_service.dart';
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/device/provisioning/bloc/bloc.dart';
 import 'package:thingsboard_app/thingsboard_client.dart';
 import 'package:thingsboard_app/utils/services/communication/events/device_provisioning_status_changed_event.dart';
 import 'package:thingsboard_app/utils/services/communication/i_communication_service.dart';
+import 'package:thingsboard_app/utils/services/provisioning/wifi_connect_service.dart';
 
 class DeviceProvisioningBloc
     extends Bloc<DeviceProvisioningEvent, DeviceProvisioningState> {

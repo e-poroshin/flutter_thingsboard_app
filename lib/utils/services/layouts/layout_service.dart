@@ -23,6 +23,12 @@ class LayoutService implements ILayoutService {
       ' -> ${deviceScreenSize.width}',
     );
 
+    // PATIENT APP: Always return exactly the patient navigation items
+    // No more overflow, strict 3-tab layout for patient users
+    if (bottomBarItems.length <= 3) {
+      return bottomBarItems;
+    }
+
     if (deviceScreenSize.width < 600) {
       return bottomBarItems.length > 3
           ? [...bottomBarItems.sublist(0, 3), more]
@@ -74,6 +80,33 @@ class LayoutService implements ILayoutService {
     required Authority authority,
   }) {
     logger.debug('LayoutService::cachePagesLayout()');
+
+    // PATIENT APP: For CUSTOMER_USER (Patient), enforce strict 3-tab layout
+    // regardless of server-side configuration
+    if (authority == Authority.CUSTOMER_USER) {
+      pagesLayout = [
+        // Tab 1: Home/Health - Patient Dashboard (will be patient_health module)
+        const PageLayout(id: Pages.home),
+        // Tab 2: History - Existing dashboard module for health metrics/history
+        const PageLayout(id: Pages.alarms),
+        // Tab 3: Profile - Settings & Profile page
+        const PageLayout(id: Pages.notifications),
+      ];
+      logger.debug(
+        'LayoutService::cachePagesLayout() - PATIENT APP: '
+        'Enforced 3-tab layout for CUSTOMER_USER',
+      );
+      return;
+    }
+
+    // PATIENT APP: Deny access to non-CUSTOMER_USER roles
+    // This is a secondary guard - primary guard is in TbContext.onUserLoaded
+    logger.warn(
+      'LayoutService::cachePagesLayout() - '
+      'Non-patient role detected: $authority',
+    );
+
+    // Fallback for legacy behavior (should not reach here in Patient App)
     if (pages == null) {
       pagesLayout = [
         const PageLayout(id: Pages.home),
@@ -89,13 +122,6 @@ class LayoutService implements ILayoutService {
             const PageLayout(id: Pages.customers),
             const PageLayout(id: Pages.assets),
             const PageLayout(id: Pages.audit_logs),
-            const PageLayout(id: Pages.notifications),
-          ],
-        );
-      } else if (authority == Authority.CUSTOMER_USER) {
-        pagesLayout.addAll(
-          [
-            const PageLayout(id: Pages.assets),
             const PageLayout(id: Pages.notifications),
           ],
         );

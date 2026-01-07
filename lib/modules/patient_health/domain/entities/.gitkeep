@@ -1,0 +1,4 @@
+# PATIENT APP: Domain Entities
+# Additional domain entities can be placed here
+# Note: Main entities are defined in i_patient_repository.dart for simplicity
+

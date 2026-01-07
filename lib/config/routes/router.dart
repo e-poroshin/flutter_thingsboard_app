@@ -8,19 +8,22 @@ import 'package:thingsboard_app/core/init/init_routes.dart';
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/alarm/alarm_routes.dart';
-import 'package:thingsboard_app/modules/asset/asset_routes.dart';
-import 'package:thingsboard_app/modules/audit_log/audit_logs_routes.dart';
-import 'package:thingsboard_app/modules/customer/customer_routes.dart';
+// PATIENT APP: Disabled admin-only routes
+// import 'package:thingsboard_app/modules/asset/asset_routes.dart';
+// import 'package:thingsboard_app/modules/audit_log/audit_logs_routes.dart';
+// import 'package:thingsboard_app/modules/customer/customer_routes.dart';
 import 'package:thingsboard_app/modules/dashboard/dashboard_routes.dart';
 import 'package:thingsboard_app/modules/dashboard/domain/entites/dashboard_arguments.dart';
-import 'package:thingsboard_app/modules/device/device_routes.dart';
-import 'package:thingsboard_app/modules/device/provisioning/route/esp_provisioning_route.dart';
+// PATIENT APP: Disabled device management routes
+// import 'package:thingsboard_app/modules/device/device_routes.dart';
+// import 'package:thingsboard_app/modules/device/provisioning/route/esp_provisioning_route.dart';
 import 'package:thingsboard_app/modules/home/home_routes.dart';
 import 'package:thingsboard_app/modules/main/main_routes.dart';
 import 'package:thingsboard_app/modules/more/more_routes.dart';
 import 'package:thingsboard_app/modules/notification/routes/notification_routes.dart';
 import 'package:thingsboard_app/modules/profile/profile_routes.dart';
-import 'package:thingsboard_app/modules/tenant/tenant_routes.dart';
+// PATIENT APP: Disabled tenant admin routes
+// import 'package:thingsboard_app/modules/tenant/tenant_routes.dart';
 import 'package:thingsboard_app/modules/url/url_routes.dart';
 import 'package:thingsboard_app/modules/version/route/version_route.dart';
 import 'package:thingsboard_app/utils/services/local_database/i_local_database_service.dart';
@@ -136,19 +139,28 @@ class ThingsboardAppRouter {
     MainRoutes(_tbContext).doRegisterRoutes(router);
     HomeRoutes(_tbContext).doRegisterRoutes(router);
     ProfileRoutes(_tbContext).doRegisterRoutes(router);
-    AssetRoutes(_tbContext).doRegisterRoutes(router);
-    DeviceRoutes(_tbContext).doRegisterRoutes(router);
+
+    // PATIENT APP: Disabled admin-only routes
+    // AssetRoutes(_tbContext).doRegisterRoutes(router);
+    // DeviceRoutes(_tbContext).doRegisterRoutes(router);
+
+    // PATIENT APP: Keep alarm and dashboard routes for patient use
     AlarmRoutes(_tbContext).doRegisterRoutes(router);
     DashboardRoutes(_tbContext).doRegisterRoutes(router);
-    AuditLogsRoutes(_tbContext).doRegisterRoutes(router);
-    CustomerRoutes(_tbContext).doRegisterRoutes(router);
-    TenantRoutes(_tbContext).doRegisterRoutes(router);
+
+    // PATIENT APP: Disabled admin-only routes
+    // AuditLogsRoutes(_tbContext).doRegisterRoutes(router);
+    // CustomerRoutes(_tbContext).doRegisterRoutes(router);
+    // TenantRoutes(_tbContext).doRegisterRoutes(router);
+
     NotificationRoutes(_tbContext).doRegisterRoutes(router);
     UrlPageRoutes(_tbContext).doRegisterRoutes(router);
     NoAuthRoutes(_tbContext).doRegisterRoutes(router);
     MoreRoutes(_tbContext).doRegisterRoutes(router);
     VersionRoutes(_tbContext).doRegisterRoutes(router);
-    EspProvisioningRoute(_tbContext).doRegisterRoutes(router);
+
+    // PATIENT APP: Disabled device provisioning route
+    // EspProvisioningRoute(_tbContext).doRegisterRoutes(router);
   }
 
   TbContext get tbContext => _tbContext;

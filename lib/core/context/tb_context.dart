@@ -172,6 +172,19 @@ Future<bool> checkDasboardAccess(String id) async {
       isUserLoaded = true;
       if (tbClient.isAuthenticated() && !tbClient.isPreVerificationToken()) {
         log.debug('authUser: ${tbClient.getAuthUser()}');
+
+        // PATIENT APP: Role Guard - Only allow CUSTOMER_USER (Patient) access
+        final authority = tbClient.getAuthUser()!.authority;
+        if (authority != Authority.CUSTOMER_USER) {
+          log.warn(
+            'TbContext.onUserLoaded: Access Denied - '
+            'Patient App Only. User authority: $authority',
+          );
+          await _showPatientOnlyError();
+          await logout(notifyUser: false);
+          return;
+        }
+
         if (tbClient.getAuthUser()!.userId != null) {
           try {
             final mobileInfo = await tbClient
@@ -383,6 +396,19 @@ Future<bool> checkDasboardAccess(String id) async {
         (userDetails != null &&
             userDetails!.additionalInfo != null &&
             userDetails!.additionalInfo!['defaultDashboardFullscreen'] == true);
+  }
+
+  /// PATIENT APP: Shows an error dialog when a non-patient user tries to access
+  Future<void> _showPatientOnlyError() async {
+    await _overlayService.showAlertDialog(
+      content: (context) => DialogContent(
+        title: 'Access Denied',
+        message: 'This is a Patient App. '
+            'Only Customer/Patient users are allowed to login. '
+            'Please contact your administrator.',
+        ok: S.of(context).cancel,
+      ),
+    );
   }
 
   String userAgent() {

@@ -16,10 +16,6 @@ class ConnectionStatus {
     this.ip,
   });
 
-  final WifiConnectionState state;
-  final String? failedReason;
-  final String? ip;
-
   factory ConnectionStatus.fromMap(Map<String, dynamic> map) {
     final stateStr = map['state'] as String? ?? 'disconnected';
     WifiConnectionState state;
@@ -40,6 +36,10 @@ class ConnectionStatus {
       ip: map['ip'] as String?,
     );
   }
+
+  final WifiConnectionState state;
+  final String? failedReason;
+  final String? ip;
 }
 
 /// Provisioning session handle
