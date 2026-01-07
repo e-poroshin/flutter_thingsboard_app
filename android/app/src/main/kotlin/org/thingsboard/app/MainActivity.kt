@@ -10,11 +10,16 @@ class MainActivity: FlutterActivity() {
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         registerTbWebAuth(flutterEngine)
+        registerEspProvisioning(flutterEngine)
     }
 
-    fun registerTbWebAuth(flutterEngine: FlutterEngine) {
+    private fun registerTbWebAuth(flutterEngine: FlutterEngine) {
         val channel = MethodChannel(flutterEngine.dartExecutor, "tb_web_auth")
         channel.setMethodCallHandler(TbWebAuthHandler(this))
     }
 
+    private fun registerEspProvisioning(flutterEngine: FlutterEngine) {
+        val channel = MethodChannel(flutterEngine.dartExecutor, "esp_provisioning")
+        channel.setMethodCallHandler(EspProvisioningHandler(this))
+    }
 }

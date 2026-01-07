@@ -1,29 +1,28 @@
-
-import 'package:esp_smartconfig/esp_smartconfig.dart';
+import 'package:thingsboard_app/utils/services/provisioning/esp_provisioning_channel.dart';
 import 'package:thingsboard_app/utils/services/provisioning/esp_smartconfig/i_esp_smartconfig_service.dart';
 
 class EspSmartConfigService implements IEspSmartConfigService {
-  const EspSmartConfigService(this.provisioner);
+  EspSmartConfigService();
 
-   final Provisioner provisioner;
+  SmartConfig _config = SmartConfig.espTouch;
 
   @override
-  Provisioner create(SmartConfig config) {
-    switch (config) {
-      case SmartConfig.espTouch:
-        return Provisioner.espTouch();
-      case SmartConfig.espTouchV2:
-        return Provisioner.espTouchV2();
-    }
+  void configure(SmartConfig config) {
+    _config = config;
   }
 
   @override
-  Future<void> start(ProvisioningRequest request)  {
-    return provisioner.start(request);
+  Future<void> start(ProvisioningRequest request) {
+    return EspProvisioningChannel.startSmartConfig(
+      ssid: request.ssid,
+      bssid: request.bssid,
+      password: request.password,
+      isEspTouchV2: _config == SmartConfig.espTouchV2,
+    );
   }
 
   @override
-  Future<void> stop() async {
-    provisioner.stop();
+  Future<void> stop() {
+    return EspProvisioningChannel.stopSmartConfig();
   }
 }

@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:esp_provisioning_softap/esp_provisioning_softap.dart';
+import 'package:thingsboard_app/utils/services/provisioning/soft_ap/i_soft_ap_service.dart'
+    show Provisioning, WifiConnectionState;
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:plugin_wifi_connect/plugin_wifi_connect.dart';
+import 'package:thingsboard_app/utils/services/provisioning/wifi_connect_service.dart';
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/device/provisioning/bloc/bloc.dart'
