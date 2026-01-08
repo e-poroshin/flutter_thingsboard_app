@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:thingsboard_app/core/context/tb_context_widget.dart';
+import 'package:thingsboard_app/core/logger/tb_logger.dart';
+import 'package:thingsboard_app/core/network/nest_api_client.dart';
+import 'package:thingsboard_app/core/network/nest_api_config.dart';
+import 'package:thingsboard_app/core/network/nest_api_exceptions.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/patient_health/di/patient_health_di.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart';
@@ -24,6 +28,7 @@ class PatientHealthPage extends TbContextWidget {
 class _PatientHealthPageState extends TbContextState<PatientHealthPage>
     with AutomaticKeepAliveClientMixin<PatientHealthPage> {
   final _diScopeKey = UniqueKey();
+  bool _isTestingConnection = false;
 
   @override
   bool get wantKeepAlive => true;
@@ -44,6 +49,122 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
       getIt<PatientBloc>().add(
         PatientLoadHealthSummaryEvent(patientId: userId),
       );
+    }
+  }
+
+  /// PATIENT APP: Test connection to NestJS BFF server
+  Future<void> _testNestConnection() async {
+    if (_isTestingConnection) return;
+
+    setState(() => _isTestingConnection = true);
+
+    final logger = getIt<TbLogger>();
+    final apiClient = getIt<NestApiClient>();
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+
+    logger.debug('Testing NestJS BFF connection...');
+    logger.debug('Base URL: ${NestApiConfig.baseUrl}');
+
+    try {
+      // Try to fetch patient profile from NestJS
+      final response = await apiClient.get<Map<String, dynamic>>(
+        NestApiConfig.patientProfile,
+      );
+
+      logger.debug('Connection test SUCCESS: $response');
+
+      scaffoldMessenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            '✅ Connection successful!\n'
+            'Profile: ${response['firstName'] ?? response['name'] ?? 'N/A'}',
+          ),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } on NestApiException catch (e) {
+      logger.error('Connection test FAILED: ${e.message}');
+
+      scaffoldMessenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            '❌ Connection failed: ${e.message}\n'
+            'Status: ${e.statusCode}',
+          ),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } catch (e, s) {
+      logger.error('Connection test ERROR', e, s);
+
+      scaffoldMessenger.showSnackBar(
+        SnackBar(
+          content: Text('❌ Error: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } finally {
+      setState(() => _isTestingConnection = false);
+    }
+  }
+
+  /// PATIENT APP: Test fetching vitals from NestJS BFF
+  Future<void> _testFetchVitals() async {
+    if (_isTestingConnection) return;
+
+    setState(() => _isTestingConnection = true);
+
+    final logger = getIt<TbLogger>();
+    final apiClient = getIt<NestApiClient>();
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+
+    logger.debug('Testing NestJS vitals endpoint...');
+
+    try {
+      final response = await apiClient.get<Map<String, dynamic>>(
+        NestApiConfig.patientVitalsLatest,
+      );
+
+      logger.debug('Vitals test SUCCESS: $response');
+
+      scaffoldMessenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            '✅ Vitals fetched!\n'
+            'Data: ${response.keys.join(", ")}',
+          ),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } on NestApiException catch (e) {
+      logger.error('Vitals test FAILED: ${e.message}');
+
+      scaffoldMessenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            '❌ Vitals failed: ${e.message}\n'
+            'Status: ${e.statusCode}',
+          ),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } catch (e, s) {
+      logger.error('Vitals test ERROR', e, s);
+
+      scaffoldMessenger.showSnackBar(
+        SnackBar(
+          content: Text('❌ Error: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } finally {
+      setState(() => _isTestingConnection = false);
     }
   }
 
@@ -95,32 +216,98 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
   }
 
   Widget _buildInitialView() {
-    return const Center(
+    return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
+          const Icon(
             Icons.health_and_safety,
             size: 64,
             color: Colors.teal,
           ),
-          SizedBox(height: 16),
-          Text(
+          const SizedBox(height: 16),
+          const Text(
             'Patient Health',
             style: TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.bold,
             ),
           ),
-          SizedBox(height: 8),
-          Text(
+          const SizedBox(height: 8),
+          const Text(
             'Your health dashboard is loading...',
             style: TextStyle(
               fontSize: 16,
               color: Colors.grey,
             ),
           ),
+          const SizedBox(height: 32),
+          // PATIENT APP: Test Connection Buttons
+          _buildTestConnectionSection(),
         ],
+      ),
+    );
+  }
+
+  /// PATIENT APP: Build test connection buttons for development
+  Widget _buildTestConnectionSection() {
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 32),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Text(
+              'NestJS BFF Connection Test',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey[700],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Base URL: ${NestApiConfig.baseUrl}',
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: _isTestingConnection ? null : _testNestConnection,
+                  icon: _isTestingConnection
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.wifi, size: 18),
+                  label: const Text('Test Profile'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.teal,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: _isTestingConnection ? null : _testFetchVitals,
+                  icon: _isTestingConnection
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.favorite, size: 18),
+                  label: const Text('Test Vitals'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

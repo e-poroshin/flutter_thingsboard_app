@@ -1,8 +1,11 @@
 import 'package:event_bus/event_bus.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:get_it/get_it.dart';
 import 'package:thingsboard_app/config/routes/router.dart';
 import 'package:thingsboard_app/core/context/tb_context.dart';
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
+import 'package:thingsboard_app/core/network/nest_api_client.dart';
+import 'package:thingsboard_app/core/network/nest_api_config.dart';
 import 'package:thingsboard_app/core/usecases/user_details_usecase.dart';
 import 'package:thingsboard_app/thingsboard_client.dart' hide UserService;
 import 'package:thingsboard_app/utils/services/_tb_secure_storage.dart';
@@ -74,5 +77,16 @@ Future<void> setUpRootDependencies() async {
     )
     ..registerFactory(
       () => const UserDetailsUseCase(),
+    )
+    // PATIENT APP: NestJS BFF API Client
+    ..registerLazySingleton<FlutterSecureStorage>(
+      () => const FlutterSecureStorage(),
+    )
+    ..registerLazySingleton<NestApiClient>(
+      () => NestApiClient(
+        baseUrl: NestApiConfig.baseUrl,
+        storage: getIt<FlutterSecureStorage>(),
+        logger: getIt<TbLogger>(),
+      ),
     );
 }
