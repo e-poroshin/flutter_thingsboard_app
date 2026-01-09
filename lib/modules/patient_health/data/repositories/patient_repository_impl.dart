@@ -1,6 +1,13 @@
 import 'package:thingsboard_app/modules/patient_health/data/datasources/medplum_remote_datasource.dart';
 import 'package:thingsboard_app/modules/patient_health/data/datasources/tb_telemetry_datasource.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_sign_entity.dart'
+    as vitals;
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart';
+
+// Type aliases for cleaner code
+typedef VitalSignEntity = vitals.VitalSignEntity;
+typedef NewVitalSignType = vitals.VitalSignType;
 
 /// PATIENT APP: Patient Repository Implementation (Data Layer)
 ///
@@ -21,6 +28,26 @@ class PatientRepositoryImpl implements IPatientRepository {
 
   final IMedplumRemoteDatasource medplumDatasource;
   final ITbTelemetryDatasource telemetryDatasource;
+
+  // ============================================================
+  // New Simplified API Implementation
+  // ============================================================
+
+  @override
+  Future<PatientEntity> getPatientProfile() async {
+    final profileData = await medplumDatasource.fetchPatientProfile();
+    return _parsePatientEntity(profileData);
+  }
+
+  @override
+  Future<List<VitalSignEntity>> getLatestVitals() async {
+    final vitalsData = await telemetryDatasource.fetchLatestVitals();
+    return _parseVitalSignEntities(vitalsData);
+  }
+
+  // ============================================================
+  // Existing API Implementation
+  // ============================================================
 
   @override
   Future<PatientHealthSummary> getPatientHealthSummary(String patientId) async {
@@ -214,5 +241,91 @@ class PatientRepositoryImpl implements IPatientRepository {
         interpretation: obs['interpretation'] as String?,
       );
     }).toList();
+  }
+
+  /// Parse profile data to PatientEntity
+  PatientEntity _parsePatientEntity(Map<String, dynamic> data) {
+    final firstName = data['firstName'] as String? ?? '';
+    final lastName = data['lastName'] as String? ?? '';
+    final fullName = data['fullName'] as String? ??
+        data['name'] as String? ??
+        '$firstName $lastName'.trim();
+
+    Gender? gender;
+    final genderStr = data['gender'] as String?;
+    if (genderStr != null) {
+      gender = switch (genderStr.toLowerCase()) {
+        'male' || 'm' => Gender.male,
+        'female' || 'f' => Gender.female,
+        'other' || 'o' => Gender.other,
+        _ => Gender.unknown,
+      };
+    }
+
+    DateTime? dob;
+    final dobStr = data['dateOfBirth'] as String? ?? data['birthDate'] as String?;
+    if (dobStr != null) {
+      dob = DateTime.tryParse(dobStr);
+    }
+
+    return PatientEntity(
+      id: data['id'] as String? ?? '',
+      fullName: fullName.isNotEmpty ? fullName : 'Unknown',
+      email: data['email'] as String? ?? '',
+      avatarUrl: data['avatarUrl'] as String? ?? data['photo'] as String?,
+      dateOfBirth: dob,
+      phoneNumber: data['phone'] as String? ?? data['phoneNumber'] as String?,
+      gender: gender,
+      address: data['address'] as String?,
+    );
+  }
+
+  /// Parse vitals data to VitalSignEntity list
+  List<VitalSignEntity> _parseVitalSignEntities(Map<String, dynamic> data) {
+    final vitalsList = <VitalSignEntity>[];
+
+    final typeMap = {
+      'heartRate': NewVitalSignType.heartRate,
+      'heart_rate': NewVitalSignType.heartRate,
+      'bloodPressure': NewVitalSignType.bloodPressure,
+      'blood_pressure': NewVitalSignType.bloodPressure,
+      'temperature': NewVitalSignType.temperature,
+      'oxygenSaturation': NewVitalSignType.oxygenSaturation,
+      'spo2': NewVitalSignType.oxygenSaturation,
+      'respiratoryRate': NewVitalSignType.respiratoryRate,
+      'respiratory_rate': NewVitalSignType.respiratoryRate,
+      'bloodGlucose': NewVitalSignType.bloodGlucose,
+      'glucose': NewVitalSignType.bloodGlucose,
+      'weight': NewVitalSignType.weight,
+    };
+
+    for (final entry in data.entries) {
+      final type = typeMap[entry.key];
+      if (type != null && entry.value != null) {
+        dynamic value = entry.value;
+        DateTime timestamp = DateTime.now();
+
+        // Handle nested format: { "value": 72, "ts": 1234567890 }
+        if (value is Map) {
+          timestamp = DateTime.fromMillisecondsSinceEpoch(
+            (value['ts'] as int?) ?? DateTime.now().millisecondsSinceEpoch,
+          );
+          value = value['value'];
+        }
+
+        final numValue = value is num ? value.toDouble() : null;
+        final isCritical = numValue != null ? !type.isValueNormal(numValue) : false;
+
+        vitalsList.add(VitalSignEntity(
+          type: type,
+          value: value,
+          unit: type.defaultUnit,
+          timestamp: timestamp,
+          isCritical: isCritical,
+        ));
+      }
+    }
+
+    return vitalsList;
   }
 }

@@ -1,9 +1,26 @@
+import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_sign_entity.dart';
+
 /// PATIENT APP: Patient Repository Interface (Domain Layer)
 /// 
 /// This abstract interface defines the contract for patient health data access.
 /// It combines data from both ThingsBoard (telemetry) and Medplum (FHIR).
 
 abstract interface class IPatientRepository {
+  // ============================================================
+  // New Simplified API (for Mock/UI Development)
+  // ============================================================
+
+  /// Get the current patient's profile
+  Future<PatientEntity> getPatientProfile();
+
+  /// Get the latest vital signs for the current patient
+  Future<List<VitalSignEntity>> getLatestVitals();
+
+  // ============================================================
+  // Existing API (for Production with BFF)
+  // ============================================================
+
   /// Get combined patient health summary
   /// Combines FHIR patient info with latest telemetry
   Future<PatientHealthSummary> getPatientHealthSummary(String patientId);
