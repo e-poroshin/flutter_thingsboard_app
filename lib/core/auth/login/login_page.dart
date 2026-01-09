@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:fluro/fluro.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -54,6 +55,12 @@ class _LoginPageState extends TbPageState<LoginPage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     LoginDi.init();
+
+    // DEBUG: Pre-fill endpoint in debug mode to prevent crash on startup
+    if (kDebugMode) {
+      _ensureEndpointSet();
+    }
+
     if (tbClient.isPreVerificationToken()) {
       SchedulerBinding.instance.addPostFrameCallback((_) {
         getIt<ThingsboardAppRouter>().navigateTo('/login/mfa');
@@ -67,6 +74,24 @@ class _LoginPageState extends TbPageState<LoginPage>
         });
       }
     });
+  }
+
+  /// DEBUG: Ensure endpoint is set to prevent "No host specified" errors
+  Future<void> _ensureEndpointSet() async {
+    if (!kDebugMode) return;
+
+    try {
+      final endpointService = getIt<IEndpointService>();
+      final currentEndpoint = endpointService.getCachedEndpoint();
+
+      if (currentEndpoint == null || currentEndpoint.isEmpty) {
+        const defaultEndpoint = 'https://demo.thingsboard.io';
+        debugPrint('DEBUG: No endpoint set, defaulting to $defaultEndpoint');
+        await endpointService.setEndpoint(defaultEndpoint);
+      }
+    } catch (e) {
+      debugPrint('DEBUG: Error ensuring endpoint: $e');
+    }
   }
 
   @override
@@ -438,6 +463,34 @@ class _LoginPageState extends TbPageState<LoginPage>
                                         style: TbTextStyles.labelMedium,
                                       ),
                                     ),
+                                    // DEBUG: Demo Login Button (only in debug mode)
+                                    if (kDebugMode) ...[
+                                      const SizedBox(height: 16),
+                                      ElevatedButton(
+                                        style: ElevatedButton.styleFrom(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 16,
+                                          ),
+                                          backgroundColor: Colors.orange[100],
+                                          foregroundColor: Colors.orange[900],
+                                        ),
+                                        onPressed: _demoLogin,
+                                        child: const Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            Icon(Icons.bug_report, size: 20),
+                                            SizedBox(width: 8),
+                                            Text(
+                                              '🐛 DEBUG: Demo Login',
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
                                     const SizedBox(height: 48),
                                   ],
                                 ),
@@ -636,5 +689,59 @@ class _LoginPageState extends TbPageState<LoginPage>
 
   Future<void> _forgotPassword() async {
     getIt<ThingsboardAppRouter>().navigateTo('/login/resetPasswordRequest');
+  }
+
+  /// DEBUG: Demo Login - Only available in debug mode
+  /// Automatically fills credentials and logs in to a demo server
+  Future<void> _demoLogin() async {
+    if (!kDebugMode) return;
+
+    FocusScope.of(context).unfocus();
+    _isLoginNotifier.value = true;
+
+    try {
+      // Step A: Ensure endpoint is set
+      final endpointService = getIt<IEndpointService>();
+      final currentEndpoint = endpointService.getCachedEndpoint();
+
+      if (currentEndpoint == null || currentEndpoint.isEmpty) {
+        // Set default demo endpoint
+        const demoEndpoint = 'https://demo.thingsboard.io';
+        log.debug('Demo Login: Setting endpoint to $demoEndpoint');
+
+        await endpointService.setEndpoint(demoEndpoint);
+
+        // Reinitialize TbContext with new endpoint
+        await tbContext.reInit(
+          endpoint: demoEndpoint,
+          onDone: () {
+            log.debug('Demo Login: TbContext reinitialized');
+          },
+          onAuthError: (error) {
+            log.error('Demo Login: Auth error during reinit', error);
+          },
+        );
+      }
+
+      // Step B: Fill credentials
+      // Using ThingsBoard demo tenant credentials
+      const demoEmail = 'testclient@thingsboard.io';
+      const demoPassword = '1qaz!QAZ';
+
+      log.debug('Demo Login: Logging in as $demoEmail');
+
+      // Step C: Trigger login directly
+      await tbClient.login(LoginRequest(demoEmail, demoPassword));
+
+      log.debug('Demo Login: Success!');
+    } catch (e, s) {
+      log.error('Demo Login: Error', e, s);
+      _isLoginNotifier.value = false;
+
+      // Show error notification
+      _overlayService.showErrorNotification(
+        (_) => 'Demo Login failed: ${e.toString()}',
+      );
+    }
   }
 }

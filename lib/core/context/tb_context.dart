@@ -180,8 +180,28 @@ Future<bool> checkDasboardAccess(String id) async {
             'TbContext.onUserLoaded: Access Denied - '
             'Patient App Only. User authority: $authority',
           );
-          await _showPatientOnlyError();
+
+          // CRITICAL: Remove splash screen first to prevent hanging
+          FlutterNativeSplash.remove();
+
+          // Show non-blocking error notification
+          _overlayService.showErrorNotification(
+            (_) => 'Access Denied: This app is for Patient users only. '
+                'Your account type ($authority) is not supported.',
+          );
+
+          // Force logout - clears tokens from secure storage
           await logout(notifyUser: false);
+
+          // Explicitly navigate to login page to prevent getting stuck
+          thingsboardAppRouter.navigateTo(
+            '/login',
+            replace: true,
+            clearStack: true,
+            transition: TransitionType.fadeIn,
+            transitionDuration: const Duration(milliseconds: 750),
+          );
+
           return;
         }
 
@@ -396,19 +416,6 @@ Future<bool> checkDasboardAccess(String id) async {
         (userDetails != null &&
             userDetails!.additionalInfo != null &&
             userDetails!.additionalInfo!['defaultDashboardFullscreen'] == true);
-  }
-
-  /// PATIENT APP: Shows an error dialog when a non-patient user tries to access
-  Future<void> _showPatientOnlyError() async {
-    await _overlayService.showAlertDialog(
-      content: (context) => DialogContent(
-        title: 'Access Denied',
-        message: 'This is a Patient App. '
-            'Only Customer/Patient users are allowed to login. '
-            'Please contact your administrator.',
-        ok: S.of(context).cancel,
-      ),
-    );
   }
 
   String userAgent() {
