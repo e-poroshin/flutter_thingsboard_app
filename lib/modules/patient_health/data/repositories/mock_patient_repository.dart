@@ -1,8 +1,9 @@
 import 'dart:math';
 
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
-import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_sign_entity.dart';
-import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_sign_entity.dart'
+    as new_entities;
+import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart' as repo;
 
 /// PATIENT APP: Mock Patient Repository
 ///
@@ -15,7 +16,7 @@ import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_pat
 /// - Randomized vital signs for realistic UI testing
 /// - Can simulate errors for error handling testing
 
-class MockPatientRepository implements IPatientRepository {
+class MockPatientRepository implements repo.IPatientRepository {
   MockPatientRepository({
     this.simulatedLatency = const Duration(seconds: 1),
     this.shouldSimulateError = false,
@@ -58,23 +59,23 @@ class MockPatientRepository implements IPatientRepository {
   }
 
   @override
-  Future<List<VitalSignEntity>> getLatestVitals() async {
+  Future<List<new_entities.VitalSignEntity>> getLatestVitals() async {
     await _simulateNetworkDelay();
 
     final now = DateTime.now();
 
     // Generate randomized vitals for realistic UI testing
     return [
-      VitalSignEntity(
-        type: VitalSignType.heartRate,
+      new_entities.VitalSignEntity(
+        type: new_entities.VitalSignType.heartRate,
         value: _randomInRange(60, 100),
         unit: 'bpm',
         timestamp: now.subtract(Duration(minutes: _random.nextInt(30))),
         isCritical: false,
         deviceId: 'fitbit-hr-001',
       ),
-      VitalSignEntity(
-        type: VitalSignType.bloodPressure,
+      new_entities.VitalSignEntity(
+        type: new_entities.VitalSignType.bloodPressure,
         value: {
           'systolic': _randomInRange(110, 140),
           'diastolic': _randomInRange(70, 90),
@@ -84,30 +85,30 @@ class MockPatientRepository implements IPatientRepository {
         isCritical: false,
         deviceId: 'omron-bp-002',
       ),
-      VitalSignEntity(
-        type: VitalSignType.temperature,
+      new_entities.VitalSignEntity(
+        type: new_entities.VitalSignType.temperature,
         value: _randomDoubleInRange(36.2, 37.0),
         unit: '°C',
         timestamp: now.subtract(Duration(hours: _random.nextInt(4))),
         isCritical: false,
       ),
-      VitalSignEntity(
-        type: VitalSignType.oxygenSaturation,
+      new_entities.VitalSignEntity(
+        type: new_entities.VitalSignType.oxygenSaturation,
         value: _randomInRange(96, 100),
         unit: '%',
         timestamp: now.subtract(Duration(minutes: _random.nextInt(15))),
         isCritical: false,
         deviceId: 'pulse-ox-003',
       ),
-      VitalSignEntity(
-        type: VitalSignType.respiratoryRate,
+      new_entities.VitalSignEntity(
+        type: new_entities.VitalSignType.respiratoryRate,
         value: _randomInRange(14, 18),
         unit: '/min',
         timestamp: now.subtract(Duration(minutes: _random.nextInt(45))),
         isCritical: false,
       ),
-      VitalSignEntity(
-        type: VitalSignType.bloodGlucose,
+      new_entities.VitalSignEntity(
+        type: new_entities.VitalSignType.bloodGlucose,
         value: _randomInRange(85, 120),
         unit: 'mg/dL',
         timestamp: now.subtract(Duration(hours: _random.nextInt(6))),
@@ -115,8 +116,8 @@ class MockPatientRepository implements IPatientRepository {
         deviceId: 'glucose-004',
         notes: 'Fasting glucose',
       ),
-      VitalSignEntity(
-        type: VitalSignType.weight,
+      new_entities.VitalSignEntity(
+        type: new_entities.VitalSignType.weight,
         value: _randomDoubleInRange(70.0, 75.0),
         unit: 'kg',
         timestamp: now.subtract(const Duration(days: 1)),
@@ -131,46 +132,46 @@ class MockPatientRepository implements IPatientRepository {
   // ============================================================
 
   @override
-  Future<PatientHealthSummary> getPatientHealthSummary(String patientId) async {
+  Future<repo.PatientHealthSummary> getPatientHealthSummary(String patientId) async {
     await _simulateNetworkDelay();
 
     final now = DateTime.now();
 
-    return PatientHealthSummary(
+    return repo.PatientHealthSummary(
       patientId: patientId,
       patientName: 'John Doe',
       lastUpdated: now,
       vitalSigns: [
-        VitalSign(
-          type: VitalSignType.heartRate,
+        repo.VitalSign(
+          type: repo.VitalSignType.heartRate,
           value: _randomInRange(60, 100).toDouble(),
           unit: 'bpm',
           timestamp: now.subtract(Duration(minutes: _random.nextInt(30))),
           isNormal: true,
         ),
-        VitalSign(
-          type: VitalSignType.bloodPressureSystolic,
+        repo.VitalSign(
+          type: repo.VitalSignType.bloodPressureSystolic,
           value: _randomInRange(110, 140).toDouble(),
           unit: 'mmHg',
           timestamp: now.subtract(Duration(minutes: _random.nextInt(60))),
           isNormal: true,
         ),
-        VitalSign(
-          type: VitalSignType.bloodPressureDiastolic,
+        repo.VitalSign(
+          type: repo.VitalSignType.bloodPressureDiastolic,
           value: _randomInRange(70, 90).toDouble(),
           unit: 'mmHg',
           timestamp: now.subtract(Duration(minutes: _random.nextInt(60))),
           isNormal: true,
         ),
-        VitalSign(
-          type: VitalSignType.temperature,
+        repo.VitalSign(
+          type: repo.VitalSignType.temperature,
           value: _randomDoubleInRange(36.2, 37.0),
           unit: '°C',
           timestamp: now.subtract(Duration(hours: _random.nextInt(4))),
           isNormal: true,
         ),
-        VitalSign(
-          type: VitalSignType.oxygenSaturation,
+        repo.VitalSign(
+          type: repo.VitalSignType.oxygenSaturation,
           value: _randomInRange(96, 100).toDouble(),
           unit: '%',
           timestamp: now.subtract(Duration(minutes: _random.nextInt(15))),
@@ -178,7 +179,7 @@ class MockPatientRepository implements IPatientRepository {
         ),
       ],
       recentObservations: [
-        ClinicalObservation(
+        repo.ClinicalObservation(
           id: 'obs-001',
           code: '29463-7',
           displayName: 'Body Weight',
@@ -186,7 +187,7 @@ class MockPatientRepository implements IPatientRepository {
           effectiveDateTime: now.subtract(const Duration(days: 1)),
           category: 'vital-signs',
         ),
-        ClinicalObservation(
+        repo.ClinicalObservation(
           id: 'obs-002',
           code: '8302-2',
           displayName: 'Body Height',
@@ -194,7 +195,7 @@ class MockPatientRepository implements IPatientRepository {
           effectiveDateTime: now.subtract(const Duration(days: 30)),
           category: 'vital-signs',
         ),
-        ClinicalObservation(
+        repo.ClinicalObservation(
           id: 'obs-003',
           code: '39156-5',
           displayName: 'BMI',
@@ -208,42 +209,42 @@ class MockPatientRepository implements IPatientRepository {
   }
 
   @override
-  Future<List<VitalSign>> getVitalSigns(String patientId) async {
+  Future<List<repo.VitalSign>> getVitalSigns(String patientId) async {
     await _simulateNetworkDelay();
 
     final now = DateTime.now();
 
     return [
-      VitalSign(
-        type: VitalSignType.heartRate,
+      repo.VitalSign(
+        type: repo.VitalSignType.heartRate,
         value: _randomInRange(60, 100).toDouble(),
         unit: 'bpm',
         timestamp: now.subtract(Duration(minutes: _random.nextInt(30))),
         isNormal: true,
       ),
-      VitalSign(
-        type: VitalSignType.bloodPressureSystolic,
+      repo.VitalSign(
+        type: repo.VitalSignType.bloodPressureSystolic,
         value: _randomInRange(110, 140).toDouble(),
         unit: 'mmHg',
         timestamp: now,
         isNormal: true,
       ),
-      VitalSign(
-        type: VitalSignType.bloodPressureDiastolic,
+      repo.VitalSign(
+        type: repo.VitalSignType.bloodPressureDiastolic,
         value: _randomInRange(70, 90).toDouble(),
         unit: 'mmHg',
         timestamp: now,
         isNormal: true,
       ),
-      VitalSign(
-        type: VitalSignType.temperature,
+      repo.VitalSign(
+        type: repo.VitalSignType.temperature,
         value: _randomDoubleInRange(36.2, 37.0),
         unit: '°C',
         timestamp: now.subtract(Duration(hours: _random.nextInt(4))),
         isNormal: true,
       ),
-      VitalSign(
-        type: VitalSignType.oxygenSaturation,
+      repo.VitalSign(
+        type: repo.VitalSignType.oxygenSaturation,
         value: _randomInRange(96, 100).toDouble(),
         unit: '%',
         timestamp: now,
@@ -253,7 +254,7 @@ class MockPatientRepository implements IPatientRepository {
   }
 
   @override
-  Future<List<ClinicalObservation>> getClinicalObservations(
+  Future<List<repo.ClinicalObservation>> getClinicalObservations(
     String patientId,
   ) async {
     await _simulateNetworkDelay();
@@ -261,7 +262,7 @@ class MockPatientRepository implements IPatientRepository {
     final now = DateTime.now();
 
     return [
-      ClinicalObservation(
+      repo.ClinicalObservation(
         id: 'obs-001',
         code: '29463-7',
         displayName: 'Body Weight',
@@ -269,7 +270,7 @@ class MockPatientRepository implements IPatientRepository {
         effectiveDateTime: now.subtract(const Duration(days: 1)),
         category: 'vital-signs',
       ),
-      ClinicalObservation(
+      repo.ClinicalObservation(
         id: 'obs-002',
         code: '8302-2',
         displayName: 'Body Height',
@@ -277,7 +278,7 @@ class MockPatientRepository implements IPatientRepository {
         effectiveDateTime: now.subtract(const Duration(days: 30)),
         category: 'vital-signs',
       ),
-      ClinicalObservation(
+      repo.ClinicalObservation(
         id: 'obs-003',
         code: '2339-0',
         displayName: 'Hemoglobin A1c',
@@ -286,7 +287,7 @@ class MockPatientRepository implements IPatientRepository {
         category: 'laboratory',
         interpretation: 'Normal',
       ),
-      ClinicalObservation(
+      repo.ClinicalObservation(
         id: 'obs-004',
         code: '2093-3',
         displayName: 'Total Cholesterol',
@@ -299,7 +300,7 @@ class MockPatientRepository implements IPatientRepository {
   }
 
   @override
-  Future<HealthHistory> getHealthHistory(
+  Future<repo.HealthHistory> getHealthHistory(
     String patientId, {
     required DateTime startDate,
     required DateTime endDate,
@@ -307,12 +308,12 @@ class MockPatientRepository implements IPatientRepository {
     await _simulateNetworkDelay();
 
     // Generate mock historical data points
-    final dataPoints = <HealthDataPoint>[];
+    final dataPoints = <repo.HealthDataPoint>[];
     var currentDate = startDate;
 
     while (currentDate.isBefore(endDate)) {
       // Heart rate data point
-      dataPoints.add(HealthDataPoint(
+      dataPoints.add(repo.HealthDataPoint(
         timestamp: currentDate,
         metricName: 'heartRate',
         value: _randomInRange(60, 100).toDouble(),
@@ -321,7 +322,7 @@ class MockPatientRepository implements IPatientRepository {
 
       // Weight data point (daily)
       if (currentDate.hour == 8) {
-        dataPoints.add(HealthDataPoint(
+        dataPoints.add(repo.HealthDataPoint(
           timestamp: currentDate,
           metricName: 'weight',
           value: _randomDoubleInRange(71, 73),
@@ -332,7 +333,7 @@ class MockPatientRepository implements IPatientRepository {
       currentDate = currentDate.add(const Duration(hours: 4));
     }
 
-    return HealthHistory(
+    return repo.HealthHistory(
       patientId: patientId,
       startDate: startDate,
       endDate: endDate,
@@ -385,4 +386,3 @@ class MockPatientRepositoryFactory {
     );
   }
 }
-

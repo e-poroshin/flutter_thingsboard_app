@@ -1,5 +1,6 @@
 import 'package:thingsboard_app/core/network/nest_api_client.dart';
 import 'package:thingsboard_app/core/network/nest_api_config.dart';
+import 'package:thingsboard_app/modules/patient_health/data/models/models.dart';
 
 /// PATIENT APP: ThingsBoard Telemetry Datasource
 ///
@@ -7,24 +8,40 @@ import 'package:thingsboard_app/core/network/nest_api_config.dart';
 /// requests to ThingsBoard for IoT telemetry data.
 ///
 /// **Architecture:**
-/// - App calls NestJS endpoints (e.g., /api/patient/vitals/latest)
+/// - App calls NestJS endpoints (e.g., /thingsboard/device/{deviceId}/telemetry)
 /// - NestJS handles ThingsBoard authentication with server-side credentials
-/// - NestJS fetches telemetry from ThingsBoard and transforms to app format
+/// - NestJS fetches telemetry from ThingsBoard and returns to app
+///
+/// **Required ID:** thingsboardDeviceId (obtained from GET /auth/profile)
 
 abstract interface class ITbTelemetryDatasource {
-  /// Fetch latest vital signs from NestJS (proxied from ThingsBoard telemetry)
-  Future<Map<String, dynamic>> fetchLatestVitals();
+  /// Fetch latest telemetry values for a device
+  /// Endpoint: GET /thingsboard/device/{deviceId}/telemetry/latest
+  Future<ThingsboardTelemetryDTO> fetchLatestTelemetry(String deviceId);
 
-  /// Fetch vital signs history for a date range
-  Future<List<Map<String, dynamic>>> fetchVitalsHistory({
+  /// Fetch telemetry history for a device
+  /// Endpoint: GET /thingsboard/device/{deviceId}/telemetry/history
+  Future<TelemetryHistoryDTO> fetchTelemetryHistory(
+    String deviceId, {
     required int startTs,
     required int endTs,
     List<String>? keys,
   });
 
-  /// Fetch telemetry data for specific keys
-  Future<Map<String, dynamic>> fetchTelemetry({
-    required List<String> keys,
+  // ==========================================================================
+  // Legacy Endpoints (for backwards compatibility / alternative API structure)
+  // ==========================================================================
+
+  /// Fetch latest vital signs from legacy endpoint
+  /// Endpoint: GET /patient/vitals/latest
+  Future<Map<String, dynamic>> fetchLatestVitals();
+
+  /// Fetch vital signs history from legacy endpoint
+  /// Endpoint: GET /patient/vitals/history
+  Future<List<Map<String, dynamic>>> fetchVitalsHistory({
+    required int startTs,
+    required int endTs,
+    List<String>? keys,
   });
 }
 
@@ -35,11 +52,45 @@ class TbTelemetryDatasource implements ITbTelemetryDatasource {
 
   final NestApiClient apiClient;
 
+  // ==========================================================================
+  // Real API Implementation (using thingsboardDeviceId)
+  // ==========================================================================
+
+  @override
+  Future<ThingsboardTelemetryDTO> fetchLatestTelemetry(String deviceId) async {
+    // GET /thingsboard/device/{deviceId}/telemetry/latest
+    final response = await apiClient.get<Map<String, dynamic>>(
+      NestApiConfig.thingsboardLatestTelemetry(deviceId),
+    );
+    return ThingsboardTelemetryDTO.fromJson(response);
+  }
+
+  @override
+  Future<TelemetryHistoryDTO> fetchTelemetryHistory(
+    String deviceId, {
+    required int startTs,
+    required int endTs,
+    List<String>? keys,
+  }) async {
+    // GET /thingsboard/device/{deviceId}/telemetry/history
+    final response = await apiClient.get<Map<String, dynamic>>(
+      NestApiConfig.thingsboardTelemetryHistory(
+        deviceId,
+        startTs: startTs,
+        endTs: endTs,
+        keys: keys,
+      ),
+    );
+    return TelemetryHistoryDTO.fromJson(response, deviceId: deviceId);
+  }
+
+  // ==========================================================================
+  // Legacy Endpoints (for backwards compatibility)
+  // ==========================================================================
+
   @override
   Future<Map<String, dynamic>> fetchLatestVitals() async {
-    // GET /api/patient/vitals/latest
-    // NestJS proxies to ThingsBoard:
-    //   GET /api/plugins/telemetry/DEVICE/{deviceId}/values/timeseries?keys=...
+    // GET /patient/vitals/latest
     final response = await apiClient.get<Map<String, dynamic>>(
       NestApiConfig.patientVitalsLatest,
     );
@@ -52,11 +103,8 @@ class TbTelemetryDatasource implements ITbTelemetryDatasource {
     required int endTs,
     List<String>? keys,
   }) async {
-    // GET /api/patient/vitals/history?startTs=...&endTs=...&keys=...
-    // NestJS proxies to ThingsBoard:
-    //   GET /api/plugins/telemetry/DEVICE/{deviceId}/values/timeseries
-    //       ?startTs=...&endTs=...&keys=...
-    final response = await apiClient.get<Map<String, dynamic>>(
+    // GET /patient/vitals/history?startTs=...&endTs=...&keys=...
+    final response = await apiClient.get<dynamic>(
       NestApiConfig.patientVitalsHistory,
       queryParameters: {
         'startTs': startTs,
@@ -65,24 +113,27 @@ class TbTelemetryDatasource implements ITbTelemetryDatasource {
       },
     );
 
-    if (response['data'] != null) {
-      return (response['data'] as List).cast<Map<String, dynamic>>();
-    }
-    return [];
+    return _parseListResponse(response);
   }
 
-  @override
-  Future<Map<String, dynamic>> fetchTelemetry({
-    required List<String> keys,
-  }) async {
-    // GET /api/health/telemetry?keys=...
-    // NestJS proxies to ThingsBoard telemetry API
-    final response = await apiClient.get<Map<String, dynamic>>(
-      NestApiConfig.healthTelemetry,
-      queryParameters: {
-        'keys': keys.join(','),
-      },
-    );
-    return response;
+  // ==========================================================================
+  // Private Helpers
+  // ==========================================================================
+
+  List<Map<String, dynamic>> _parseListResponse(dynamic response) {
+    if (response is List) {
+      return response.cast<Map<String, dynamic>>();
+    }
+
+    if (response is Map<String, dynamic>) {
+      if (response['data'] is List) {
+        return (response['data'] as List).cast<Map<String, dynamic>>();
+      }
+      if (response['results'] is List) {
+        return (response['results'] as List).cast<Map<String, dynamic>>();
+      }
+    }
+
+    return [];
   }
 }

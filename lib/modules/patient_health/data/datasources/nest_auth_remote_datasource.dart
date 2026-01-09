@@ -1,19 +1,26 @@
 import 'package:thingsboard_app/core/network/nest_api_client.dart';
 import 'package:thingsboard_app/core/network/nest_api_config.dart';
 import 'package:thingsboard_app/core/network/nest_api_exceptions.dart';
-import 'package:thingsboard_app/modules/patient_health/data/models/auth_response.dart';
+import 'package:thingsboard_app/modules/patient_health/data/models/models.dart';
 
 /// PATIENT APP: NestJS Authentication Remote Datasource
 ///
 /// Handles authentication API calls to the NestJS BFF server.
 /// This replaces the default ThingsBoard authentication.
+///
+/// **Endpoints:**
+/// - POST /auth/login - Login with email/password
+/// - GET /auth/profile - Get user profile with linked IDs
 
 abstract interface class INestAuthRemoteDatasource {
   /// Login with email and password
+  /// Endpoint: POST /auth/login
+  /// Body: { "email": "...", "password": "..." }
   /// Returns [AuthResponse] containing the access token
   Future<AuthResponse> login(String email, String password);
 
   /// Register a new patient account
+  /// Endpoint: POST /auth/register
   Future<AuthResponse> register({
     required String email,
     required String password,
@@ -22,13 +29,17 @@ abstract interface class INestAuthRemoteDatasource {
   });
 
   /// Refresh the access token using refresh token
+  /// Endpoint: POST /auth/refresh
   Future<AuthResponse> refreshToken(String refreshToken);
 
   /// Logout and invalidate tokens on server
+  /// Endpoint: POST /auth/logout
   Future<void> logout();
 
-  /// Get current user profile
-  Future<Map<String, dynamic>> getProfile();
+  /// Get current user profile with linked IDs
+  /// Endpoint: GET /auth/profile
+  /// Returns: userId, medplumPatientId, thingsboardDeviceId
+  Future<UserProfileDTO> getProfile();
 }
 
 class NestAuthRemoteDatasource implements INestAuthRemoteDatasource {
@@ -112,11 +123,11 @@ class NestAuthRemoteDatasource implements INestAuthRemoteDatasource {
   }
 
   @override
-  Future<Map<String, dynamic>> getProfile() async {
+  Future<UserProfileDTO> getProfile() async {
     final response = await apiClient.get<Map<String, dynamic>>(
       NestApiConfig.authProfile,
     );
-    return response;
+    return UserProfileDTO.fromJson(response);
   }
 }
 

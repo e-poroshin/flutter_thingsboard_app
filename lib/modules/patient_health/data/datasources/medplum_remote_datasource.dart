@@ -1,5 +1,6 @@
 import 'package:thingsboard_app/core/network/nest_api_client.dart';
 import 'package:thingsboard_app/core/network/nest_api_config.dart';
+import 'package:thingsboard_app/modules/patient_health/data/models/models.dart';
 
 /// PATIENT APP: Medplum FHIR Remote Datasource
 ///
@@ -7,22 +8,40 @@ import 'package:thingsboard_app/core/network/nest_api_config.dart';
 /// requests to Medplum for FHIR clinical data.
 ///
 /// **Architecture:**
-/// - App calls NestJS endpoints (e.g., /api/patient/profile)
+/// - App calls NestJS endpoints (e.g., /medplum/Patient/{id})
 /// - NestJS handles Medplum authentication with server-side credentials
-/// - NestJS transforms FHIR resources to simplified JSON for the app
+/// - NestJS returns FHIR resources
+///
+/// **Required ID:** medplumPatientId (obtained from GET /auth/profile)
 
 abstract interface class IMedplumRemoteDatasource {
-  /// Fetch patient's profile from NestJS (proxied from Medplum FHIR Patient)
+  /// Fetch patient record from Medplum
+  /// Endpoint: GET /medplum/Patient/{patientId}
+  Future<MedplumPatientDTO> fetchPatient(String patientId);
+
+  /// Fetch patient's health observations
+  /// Endpoint: GET /medplum/Observation?patient={patientId}
+  Future<List<Map<String, dynamic>>> fetchObservations(String patientId);
+
+  /// Fetch patient's conditions/diagnoses
+  /// Endpoint: GET /medplum/Condition?patient={patientId}
+  Future<List<Map<String, dynamic>>> fetchConditions(String patientId);
+
+  /// Fetch patient's medications
+  /// Endpoint: GET /medplum/MedicationRequest?patient={patientId}
+  Future<List<Map<String, dynamic>>> fetchMedications(String patientId);
+
+  // ==========================================================================
+  // Legacy Endpoints (for backwards compatibility / alternative API structure)
+  // ==========================================================================
+
+  /// Fetch patient's profile from legacy endpoint
+  /// Endpoint: GET /patient/profile
   Future<Map<String, dynamic>> fetchPatientProfile();
 
-  /// Fetch patient's health observations (proxied from Medplum FHIR Observation)
+  /// Fetch patient's observations from legacy endpoint
+  /// Endpoint: GET /patient/observations
   Future<List<Map<String, dynamic>>> fetchPatientObservations();
-
-  /// Fetch patient's conditions/diagnoses (proxied from Medplum FHIR Condition)
-  Future<List<Map<String, dynamic>>> fetchPatientConditions();
-
-  /// Fetch patient's medications (proxied from Medplum FHIR MedicationRequest)
-  Future<List<Map<String, dynamic>>> fetchPatientMedications();
 }
 
 class MedplumRemoteDatasource implements IMedplumRemoteDatasource {
@@ -32,10 +51,53 @@ class MedplumRemoteDatasource implements IMedplumRemoteDatasource {
 
   final NestApiClient apiClient;
 
+  // ==========================================================================
+  // Real API Implementation (using medplumPatientId)
+  // ==========================================================================
+
+  @override
+  Future<MedplumPatientDTO> fetchPatient(String patientId) async {
+    // GET /medplum/Patient/{patientId}
+    final response = await apiClient.get<Map<String, dynamic>>(
+      NestApiConfig.medplumPatient(patientId),
+    );
+    return MedplumPatientDTO.fromJson(response);
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> fetchObservations(String patientId) async {
+    // GET /medplum/Observation?patient={patientId}
+    final response = await apiClient.get<dynamic>(
+      NestApiConfig.medplumObservations(patientId),
+    );
+    return _parseListResponse(response);
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> fetchConditions(String patientId) async {
+    // GET /medplum/Condition?patient={patientId}
+    final response = await apiClient.get<dynamic>(
+      NestApiConfig.medplumConditions(patientId),
+    );
+    return _parseListResponse(response);
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> fetchMedications(String patientId) async {
+    // GET /medplum/MedicationRequest?patient={patientId}
+    final response = await apiClient.get<dynamic>(
+      NestApiConfig.medplumMedications(patientId),
+    );
+    return _parseListResponse(response);
+  }
+
+  // ==========================================================================
+  // Legacy Endpoints (for backwards compatibility)
+  // ==========================================================================
+
   @override
   Future<Map<String, dynamic>> fetchPatientProfile() async {
-    // GET /api/patient/profile
-    // NestJS proxies to Medplum: GET /fhir/R4/Patient/{patientId}
+    // GET /patient/profile
     final response = await apiClient.get<Map<String, dynamic>>(
       NestApiConfig.patientProfile,
     );
@@ -44,44 +106,45 @@ class MedplumRemoteDatasource implements IMedplumRemoteDatasource {
 
   @override
   Future<List<Map<String, dynamic>>> fetchPatientObservations() async {
-    // GET /api/patient/observations
-    // NestJS proxies to Medplum: GET /fhir/R4/Observation?patient={patientId}
-    final response = await apiClient.get<Map<String, dynamic>>(
+    // GET /patient/observations
+    final response = await apiClient.get<dynamic>(
       NestApiConfig.patientObservations,
     );
-
-    // Handle response format: { "data": [...] } or just [...]
-    if (response['data'] != null) {
-      return (response['data'] as List).cast<Map<String, dynamic>>();
-    }
-    return [];
+    return _parseListResponse(response);
   }
 
-  @override
-  Future<List<Map<String, dynamic>>> fetchPatientConditions() async {
-    // GET /api/patient/conditions
-    // NestJS proxies to Medplum: GET /fhir/R4/Condition?patient={patientId}
-    final response = await apiClient.get<Map<String, dynamic>>(
-      NestApiConfig.patientConditions,
-    );
+  // ==========================================================================
+  // Private Helpers
+  // ==========================================================================
 
-    if (response['data'] != null) {
-      return (response['data'] as List).cast<Map<String, dynamic>>();
+  /// Parse response that could be:
+  /// - Direct array: [...]
+  /// - FHIR Bundle: { "entry": [{ "resource": {...} }, ...] }
+  /// - Wrapped array: { "data": [...] }
+  List<Map<String, dynamic>> _parseListResponse(dynamic response) {
+    if (response is List) {
+      return response.cast<Map<String, dynamic>>();
     }
-    return [];
-  }
 
-  @override
-  Future<List<Map<String, dynamic>>> fetchPatientMedications() async {
-    // GET /api/patient/medications
-    // NestJS proxies to Medplum: GET /fhir/R4/MedicationRequest?patient={patientId}
-    final response = await apiClient.get<Map<String, dynamic>>(
-      NestApiConfig.patientMedications,
-    );
+    if (response is Map<String, dynamic>) {
+      // Check for FHIR Bundle format
+      if (response['entry'] is List) {
+        return (response['entry'] as List)
+            .map((e) => (e['resource'] ?? e) as Map<String, dynamic>)
+            .toList();
+      }
 
-    if (response['data'] != null) {
-      return (response['data'] as List).cast<Map<String, dynamic>>();
+      // Check for wrapped data format
+      if (response['data'] is List) {
+        return (response['data'] as List).cast<Map<String, dynamic>>();
+      }
+
+      // Check for results format
+      if (response['results'] is List) {
+        return (response['results'] as List).cast<Map<String, dynamic>>();
+      }
     }
+
     return [];
   }
 }

@@ -2,7 +2,7 @@ import 'package:thingsboard_app/core/logger/tb_logger.dart';
 import 'package:thingsboard_app/core/network/nest_api_client.dart';
 import 'package:thingsboard_app/core/network/nest_api_exceptions.dart';
 import 'package:thingsboard_app/modules/patient_health/data/datasources/nest_auth_remote_datasource.dart';
-import 'package:thingsboard_app/modules/patient_health/data/models/auth_response.dart';
+import 'package:thingsboard_app/modules/patient_health/data/models/models.dart';
 
 /// PATIENT APP: NestJS Authentication Repository Interface
 ///
@@ -26,8 +26,8 @@ abstract interface class INestAuthRepository {
   /// Check if user is currently authenticated
   Future<bool> isAuthenticated();
 
-  /// Get current user profile
-  Future<Map<String, dynamic>> getProfile();
+  /// Get current user profile with linked IDs
+  Future<UserProfileDTO> getProfile();
 
   /// Try to refresh the access token
   Future<bool> refreshToken();
@@ -135,7 +135,7 @@ class NestAuthRepository implements INestAuthRepository {
   }
 
   @override
-  Future<Map<String, dynamic>> getProfile() async {
+  Future<UserProfileDTO> getProfile() async {
     logger.debug('NestAuthRepository: Fetching user profile');
     return await datasource.getProfile();
   }

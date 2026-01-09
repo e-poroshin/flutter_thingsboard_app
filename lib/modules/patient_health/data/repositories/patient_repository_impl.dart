@@ -1,5 +1,8 @@
+import 'package:thingsboard_app/core/logger/tb_logger.dart';
 import 'package:thingsboard_app/modules/patient_health/data/datasources/medplum_remote_datasource.dart';
+import 'package:thingsboard_app/modules/patient_health/data/datasources/nest_auth_remote_datasource.dart';
 import 'package:thingsboard_app/modules/patient_health/data/datasources/tb_telemetry_datasource.dart';
+import 'package:thingsboard_app/modules/patient_health/data/models/models.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_sign_entity.dart'
     as vitals;
@@ -9,6 +12,10 @@ import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_pat
 typedef VitalSignEntity = vitals.VitalSignEntity;
 typedef NewVitalSignType = vitals.VitalSignType;
 
+// Alias for the old VitalSign type from the repository interface
+typedef LegacyVitalSign = VitalSign;
+typedef LegacyVitalSignType = VitalSignType;
+
 /// PATIENT APP: Patient Repository Implementation (Data Layer)
 ///
 /// Combines data from NestJS BFF endpoints that proxy to:
@@ -17,104 +24,243 @@ typedef NewVitalSignType = vitals.VitalSignType;
 ///
 /// **Architecture:**
 /// - All data flows through NestJS BFF
-/// - Repository transforms raw JSON to domain entities
-/// - Handles data aggregation and caching (future)
+/// - Repository fetches linked IDs from user profile first
+/// - Uses medplumPatientId for FHIR data
+/// - Uses thingsboardDeviceId for telemetry data
+/// - Falls back to legacy endpoints if IDs not available
 
 class PatientRepositoryImpl implements IPatientRepository {
-  const PatientRepositoryImpl({
+  PatientRepositoryImpl({
+    required this.authDatasource,
     required this.medplumDatasource,
     required this.telemetryDatasource,
+    this.logger,
   });
 
+  final INestAuthRemoteDatasource authDatasource;
   final IMedplumRemoteDatasource medplumDatasource;
   final ITbTelemetryDatasource telemetryDatasource;
+  final TbLogger? logger;
+
+  /// Cached user profile (contains linked IDs)
+  UserProfileDTO? _cachedProfile;
+
+  /// Get the current user profile (cached)
+  UserProfileDTO? get currentProfile => _cachedProfile;
 
   // ============================================================
-  // New Simplified API Implementation
+  // Profile Management
+  // ============================================================
+
+  /// Fetch and cache the user profile
+  /// This MUST be called first to get medplumPatientId and thingsboardDeviceId
+  Future<UserProfileDTO> fetchUserProfile({bool forceRefresh = false}) async {
+    if (_cachedProfile != null && !forceRefresh) {
+      return _cachedProfile!;
+    }
+
+    logger?.debug('PatientRepositoryImpl: Fetching user profile...');
+    _cachedProfile = await authDatasource.getProfile();
+    logger?.debug(
+      'PatientRepositoryImpl: Profile loaded - '
+      'medplumPatientId: ${_cachedProfile?.medplumPatientId}, '
+      'thingsboardDeviceId: ${_cachedProfile?.thingsboardDeviceId}',
+    );
+    return _cachedProfile!;
+  }
+
+  /// Clear the cached profile (e.g., on logout)
+  void clearCache() {
+    _cachedProfile = null;
+  }
+
+  // ============================================================
+  // IPatientRepository Implementation
   // ============================================================
 
   @override
   Future<PatientEntity> getPatientProfile() async {
-    final profileData = await medplumDatasource.fetchPatientProfile();
-    return _parsePatientEntity(profileData);
-  }
+    // Step 1: Ensure we have the user profile with linked IDs
+    final userProfile = await fetchUserProfile();
 
-  @override
-  Future<List<VitalSignEntity>> getLatestVitals() async {
-    final vitalsData = await telemetryDatasource.fetchLatestVitals();
-    return _parseVitalSignEntities(vitalsData);
-  }
-
-  // ============================================================
-  // Existing API Implementation
-  // ============================================================
-
-  @override
-  Future<PatientHealthSummary> getPatientHealthSummary(String patientId) async {
-    try {
-      // Fetch data in parallel from NestJS BFF
-      final results = await Future.wait([
-        medplumDatasource.fetchPatientProfile(),
-        telemetryDatasource.fetchLatestVitals(),
-        medplumDatasource.fetchPatientObservations(),
-      ]);
-
-      final profileData = results[0] as Map<String, dynamic>;
-      final vitalsData = results[1] as Map<String, dynamic>;
-      final observationsData = results[2] as List<Map<String, dynamic>>;
-
-      // Transform to domain entities
-      final vitalSigns = _parseVitalSigns(vitalsData);
-      final observations = _parseClinicalObservations(observationsData);
-
-      return PatientHealthSummary(
-        patientId: patientId,
-        patientName: _extractPatientName(profileData),
-        lastUpdated: DateTime.now(),
-        vitalSigns: vitalSigns,
-        recentObservations: observations,
+    // Step 2: Use medplumPatientId if available, otherwise fall back to legacy
+    if (userProfile.hasMedplumPatient) {
+      logger?.debug(
+        'PatientRepositoryImpl: Fetching Medplum patient ${userProfile.medplumPatientId}',
       );
-    } catch (e) {
-      // Return empty summary on error, let BLoC handle error state
-      rethrow;
+      final medplumPatient = await medplumDatasource.fetchPatient(
+        userProfile.medplumPatientId!,
+      );
+      return _mapMedplumPatientToEntity(medplumPatient, userProfile);
+    } else {
+      // Fallback to legacy endpoint
+      logger?.debug('PatientRepositoryImpl: Using legacy patient profile endpoint');
+      final profileData = await medplumDatasource.fetchPatientProfile();
+      return _parsePatientEntity(profileData, userProfile);
     }
   }
 
   @override
-  Future<List<VitalSign>> getVitalSigns(String patientId) async {
-    final vitalsData = await telemetryDatasource.fetchLatestVitals();
-    return _parseVitalSigns(vitalsData);
+  Future<List<VitalSignEntity>> getLatestVitals() async {
+    // Step 1: Ensure we have the user profile with linked IDs
+    final userProfile = await fetchUserProfile();
+
+    // Step 2: Use thingsboardDeviceId if available, otherwise fall back to legacy
+    if (userProfile.hasThingsboardDevice) {
+      logger?.debug(
+        'PatientRepositoryImpl: Fetching telemetry for device ${userProfile.thingsboardDeviceId}',
+      );
+      final telemetry = await telemetryDatasource.fetchLatestTelemetry(
+        userProfile.thingsboardDeviceId!,
+      );
+      return _mapTelemetryToVitals(telemetry);
+    } else {
+      // Fallback to legacy endpoint
+      logger?.debug('PatientRepositoryImpl: Using legacy vitals endpoint');
+      final vitalsData = await telemetryDatasource.fetchLatestVitals();
+      return _parseVitalSignEntities(vitalsData);
+    }
   }
 
-  @override
+  // ============================================================
+  // Additional Data Methods
+  // ============================================================
+
+  /// Get vital signs history for a date range
+  Future<List<VitalSignEntity>> getVitalsHistory({
+    required DateTime startDate,
+    required DateTime endDate,
+    List<String>? keys,
+  }) async {
+    final userProfile = await fetchUserProfile();
+
+    if (userProfile.hasThingsboardDevice) {
+      final history = await telemetryDatasource.fetchTelemetryHistory(
+        userProfile.thingsboardDeviceId!,
+        startTs: startDate.millisecondsSinceEpoch,
+        endTs: endDate.millisecondsSinceEpoch,
+        keys: keys,
+      );
+      return _mapTelemetryHistoryToVitals(history);
+    } else {
+      // Fallback to legacy endpoint
+      final historyData = await telemetryDatasource.fetchVitalsHistory(
+        startTs: startDate.millisecondsSinceEpoch,
+        endTs: endDate.millisecondsSinceEpoch,
+        keys: keys,
+      );
+      return _parseVitalsHistoryData(historyData);
+    }
+  }
+
+  /// Get patient's clinical observations from Medplum (raw data)
+  Future<List<Map<String, dynamic>>> _fetchClinicalObservationsRaw() async {
+    final userProfile = await fetchUserProfile();
+
+    if (userProfile.hasMedplumPatient) {
+      return await medplumDatasource.fetchObservations(
+        userProfile.medplumPatientId!,
+      );
+    } else {
+      return await medplumDatasource.fetchPatientObservations();
+    }
+  }
+
+  /// Get patient's clinical observations (IPatientRepository interface)
   Future<List<ClinicalObservation>> getClinicalObservations(
     String patientId,
   ) async {
-    final observationsData = await medplumDatasource.fetchPatientObservations();
-    return _parseClinicalObservations(observationsData);
+    final rawObservations = await _fetchClinicalObservationsRaw();
+    return _parseClinicalObservations(rawObservations);
   }
 
+  /// Get patient's conditions from Medplum
+  Future<List<Map<String, dynamic>>> getConditions() async {
+    final userProfile = await fetchUserProfile();
+
+    if (userProfile.hasMedplumPatient) {
+      return await medplumDatasource.fetchConditions(
+        userProfile.medplumPatientId!,
+      );
+    }
+    return [];
+  }
+
+  /// Get patient's medications from Medplum
+  Future<List<Map<String, dynamic>>> getMedications() async {
+    final userProfile = await fetchUserProfile();
+
+    if (userProfile.hasMedplumPatient) {
+      return await medplumDatasource.fetchMedications(
+        userProfile.medplumPatientId!,
+      );
+    }
+    return [];
+  }
+
+  // ============================================================
+  // Legacy IPatientRepository Methods (for BLoC compatibility)
+  // ============================================================
+
+  /// Get combined patient health summary (legacy method)
+  @override
+  Future<PatientHealthSummary> getPatientHealthSummary(String patientId) async {
+    logger?.debug('PatientRepositoryImpl: Getting health summary');
+
+    try {
+      // Fetch data in parallel
+      final results = await Future.wait([
+        getPatientProfile(),
+        getLatestVitals(),
+        _fetchClinicalObservationsRaw(),
+      ]);
+
+      final patientEntity = results[0] as PatientEntity;
+      final vitalEntities = results[1] as List<VitalSignEntity>;
+      final observations = results[2] as List<Map<String, dynamic>>;
+
+      // Convert VitalSignEntity to legacy VitalSign
+      final legacyVitalSigns = vitalEntities.map(_mapToLegacyVitalSign).toList();
+      final clinicalObservations = _parseClinicalObservations(observations);
+
+      return PatientHealthSummary(
+        patientId: patientId,
+        patientName: patientEntity.fullName,
+        lastUpdated: DateTime.now(),
+        vitalSigns: legacyVitalSigns,
+        recentObservations: clinicalObservations,
+      );
+    } catch (e) {
+      logger?.error('PatientRepositoryImpl: Error getting health summary', e);
+      rethrow;
+    }
+  }
+
+  /// Get patient's vital signs (legacy method)
+  @override
+  Future<List<LegacyVitalSign>> getVitalSigns(String patientId) async {
+    final vitalEntities = await getLatestVitals();
+    return vitalEntities.map(_mapToLegacyVitalSign).toList();
+  }
+
+  /// Get patient's health history (legacy method)
   @override
   Future<HealthHistory> getHealthHistory(
     String patientId, {
     required DateTime startDate,
     required DateTime endDate,
   }) async {
-    final historyData = await telemetryDatasource.fetchVitalsHistory(
-      startTs: startDate.millisecondsSinceEpoch,
-      endTs: endDate.millisecondsSinceEpoch,
+    final vitalsHistory = await getVitalsHistory(
+      startDate: startDate,
+      endDate: endDate,
     );
 
-    final dataPoints = historyData
-        .map((item) => HealthDataPoint(
-              timestamp: DateTime.fromMillisecondsSinceEpoch(
-                item['ts'] as int? ?? 0,
-              ),
-              metricName: item['key'] as String? ?? 'unknown',
-              value: (item['value'] as num?)?.toDouble() ?? 0.0,
-              unit: item['unit'] as String?,
-            ))
-        .toList();
+    final dataPoints = vitalsHistory.map((vital) => HealthDataPoint(
+      timestamp: vital.timestamp,
+      metricName: vital.type.displayName,
+      value: vital.numericValue ?? 0.0,
+      unit: vital.unit,
+    )).toList();
 
     return HealthHistory(
       patientId: patientId,
@@ -125,106 +271,39 @@ class PatientRepositoryImpl implements IPatientRepository {
   }
 
   // ============================================================
-  // Private Helper Methods
+  // Private Mapping Methods
   // ============================================================
 
-  String? _extractPatientName(Map<String, dynamic> profileData) {
-    final firstName = profileData['firstName'] as String?;
-    final lastName = profileData['lastName'] as String?;
-    final name = profileData['name'] as String?;
-
-    if (firstName != null || lastName != null) {
-      return [firstName, lastName].whereType<String>().join(' ');
-    }
-    return name;
-  }
-
-  List<VitalSign> _parseVitalSigns(Map<String, dynamic> vitalsData) {
-    final vitalSigns = <VitalSign>[];
-
-    // Map of API keys to VitalSignType
-    final keyToType = {
-      'heartRate': VitalSignType.heartRate,
-      'heart_rate': VitalSignType.heartRate,
-      'bloodPressureSystolic': VitalSignType.bloodPressureSystolic,
-      'systolic': VitalSignType.bloodPressureSystolic,
-      'bloodPressureDiastolic': VitalSignType.bloodPressureDiastolic,
-      'diastolic': VitalSignType.bloodPressureDiastolic,
-      'temperature': VitalSignType.temperature,
-      'oxygenSaturation': VitalSignType.oxygenSaturation,
-      'spo2': VitalSignType.oxygenSaturation,
-      'respiratoryRate': VitalSignType.respiratoryRate,
-      'respiratory_rate': VitalSignType.respiratoryRate,
-      'bloodGlucose': VitalSignType.bloodGlucose,
-      'glucose': VitalSignType.bloodGlucose,
-      'weight': VitalSignType.weight,
+  /// Convert new VitalSignEntity to legacy VitalSign
+  LegacyVitalSign _mapToLegacyVitalSign(VitalSignEntity entity) {
+    // Map new VitalSignType to legacy VitalSignType
+    final legacyType = switch (entity.type) {
+      NewVitalSignType.heartRate => LegacyVitalSignType.heartRate,
+      NewVitalSignType.bloodPressure => LegacyVitalSignType.bloodPressureSystolic,
+      NewVitalSignType.temperature => LegacyVitalSignType.temperature,
+      NewVitalSignType.oxygenSaturation => LegacyVitalSignType.oxygenSaturation,
+      NewVitalSignType.respiratoryRate => LegacyVitalSignType.respiratoryRate,
+      NewVitalSignType.bloodGlucose => LegacyVitalSignType.bloodGlucose,
+      NewVitalSignType.weight => LegacyVitalSignType.weight,
+      // Height and BMI don't have legacy equivalents, map to weight as fallback
+      NewVitalSignType.height => LegacyVitalSignType.weight,
+      NewVitalSignType.bmi => LegacyVitalSignType.weight,
     };
 
-    final unitMap = {
-      VitalSignType.heartRate: 'bpm',
-      VitalSignType.bloodPressureSystolic: 'mmHg',
-      VitalSignType.bloodPressureDiastolic: 'mmHg',
-      VitalSignType.temperature: '°C',
-      VitalSignType.oxygenSaturation: '%',
-      VitalSignType.respiratoryRate: '/min',
-      VitalSignType.bloodGlucose: 'mg/dL',
-      VitalSignType.weight: 'kg',
-    };
-
-    for (final entry in vitalsData.entries) {
-      final type = keyToType[entry.key];
-      if (type != null && entry.value != null) {
-        final value = entry.value;
-        double numValue;
-
-        if (value is num) {
-          numValue = value.toDouble();
-        } else if (value is Map) {
-          // Handle nested format: { "value": 72, "ts": 1234567890 }
-          numValue = (value['value'] as num?)?.toDouble() ?? 0.0;
-        } else {
-          continue;
-        }
-
-        vitalSigns.add(VitalSign(
-          type: type,
-          value: numValue,
-          unit: unitMap[type] ?? '',
-          timestamp: DateTime.now(),
-          isNormal: _isVitalSignNormal(type, numValue),
-        ));
-      }
-    }
-
-    return vitalSigns;
+    return LegacyVitalSign(
+      type: legacyType,
+      value: entity.numericValue ?? 0.0,
+      unit: entity.unit,
+      timestamp: entity.timestamp,
+      isNormal: !entity.isCritical,
+    );
   }
 
-  bool _isVitalSignNormal(VitalSignType type, double value) {
-    // Basic normal ranges - should be configurable
-    switch (type) {
-      case VitalSignType.heartRate:
-        return value >= 60 && value <= 100;
-      case VitalSignType.bloodPressureSystolic:
-        return value >= 90 && value <= 140;
-      case VitalSignType.bloodPressureDiastolic:
-        return value >= 60 && value <= 90;
-      case VitalSignType.temperature:
-        return value >= 36.1 && value <= 37.2;
-      case VitalSignType.oxygenSaturation:
-        return value >= 95;
-      case VitalSignType.respiratoryRate:
-        return value >= 12 && value <= 20;
-      case VitalSignType.bloodGlucose:
-        return value >= 70 && value <= 140;
-      case VitalSignType.weight:
-        return true; // Weight doesn't have a "normal" range
-    }
-  }
-
+  /// Parse clinical observations from raw data
   List<ClinicalObservation> _parseClinicalObservations(
-    List<Map<String, dynamic>> observationsData,
+    List<Map<String, dynamic>> observations,
   ) {
-    return observationsData.map((obs) {
+    return observations.map((obs) {
       return ClinicalObservation(
         id: obs['id'] as String? ?? '',
         code: obs['code'] as String? ?? '',
@@ -243,15 +322,99 @@ class PatientRepositoryImpl implements IPatientRepository {
     }).toList();
   }
 
-  /// Parse profile data to PatientEntity
-  PatientEntity _parsePatientEntity(Map<String, dynamic> data) {
-    final firstName = data['firstName'] as String? ?? '';
-    final lastName = data['lastName'] as String? ?? '';
+  /// Map MedplumPatientDTO to PatientEntity
+  PatientEntity _mapMedplumPatientToEntity(
+    MedplumPatientDTO medplumPatient,
+    UserProfileDTO userProfile,
+  ) {
+    // Parse gender
+    Gender gender = Gender.unknown;
+    if (medplumPatient.gender != null) {
+      gender = switch (medplumPatient.gender!.toLowerCase()) {
+        'male' => Gender.male,
+        'female' => Gender.female,
+        'other' => Gender.other,
+        _ => Gender.unknown,
+      };
+    }
+
+    return PatientEntity(
+      id: medplumPatient.id,
+      fullName: medplumPatient.fullName,
+      email: medplumPatient.email ?? userProfile.email,
+      avatarUrl: medplumPatient.photoUrl,
+      dateOfBirth: medplumPatient.birthDateTime,
+      phoneNumber: medplumPatient.phone,
+      gender: gender,
+      address: medplumPatient.address?.firstOrNull?.fullAddress,
+    );
+  }
+
+  /// Map ThingsboardTelemetryDTO to VitalSignEntity list
+  List<VitalSignEntity> _mapTelemetryToVitals(ThingsboardTelemetryDTO telemetry) {
+    final vitalsList = <VitalSignEntity>[];
+
+    for (final key in telemetry.keys) {
+      final type = _mapKeyToVitalType(key);
+      if (type == null) continue;
+
+      final telemetryValue = telemetry.getLatestValue(key);
+      if (telemetryValue == null) continue;
+
+      final numValue = telemetryValue.numericValue;
+      final isCritical = numValue != null ? !type.isValueNormal(numValue) : false;
+
+      vitalsList.add(VitalSignEntity(
+        type: type,
+        value: telemetryValue.value,
+        unit: type.defaultUnit,
+        timestamp: telemetryValue.timestamp,
+        isCritical: isCritical,
+      ));
+    }
+
+    return vitalsList;
+  }
+
+  /// Map TelemetryHistoryDTO to VitalSignEntity list
+  List<VitalSignEntity> _mapTelemetryHistoryToVitals(TelemetryHistoryDTO history) {
+    final vitalsList = <VitalSignEntity>[];
+
+    for (final key in history.keys) {
+      final type = _mapKeyToVitalType(key);
+      if (type == null) continue;
+
+      for (final value in history.getValues(key)) {
+        final numValue = value.numericValue;
+        final isCritical = numValue != null ? !type.isValueNormal(numValue) : false;
+
+        vitalsList.add(VitalSignEntity(
+          type: type,
+          value: value.value,
+          unit: type.defaultUnit,
+          timestamp: value.timestamp,
+          isCritical: isCritical,
+        ));
+      }
+    }
+
+    // Sort by timestamp descending
+    vitalsList.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return vitalsList;
+  }
+
+  /// Parse legacy profile data to PatientEntity
+  PatientEntity _parsePatientEntity(
+    Map<String, dynamic> data,
+    UserProfileDTO userProfile,
+  ) {
+    final firstName = data['firstName'] as String? ?? userProfile.firstName ?? '';
+    final lastName = data['lastName'] as String? ?? userProfile.lastName ?? '';
     final fullName = data['fullName'] as String? ??
         data['name'] as String? ??
         '$firstName $lastName'.trim();
 
-    Gender? gender;
+    Gender gender = Gender.unknown;
     final genderStr = data['gender'] as String?;
     if (genderStr != null) {
       gender = switch (genderStr.toLowerCase()) {
@@ -269,9 +432,9 @@ class PatientRepositoryImpl implements IPatientRepository {
     }
 
     return PatientEntity(
-      id: data['id'] as String? ?? '',
-      fullName: fullName.isNotEmpty ? fullName : 'Unknown',
-      email: data['email'] as String? ?? '',
+      id: data['id'] as String? ?? userProfile.id,
+      fullName: fullName.isNotEmpty ? fullName : userProfile.fullName,
+      email: data['email'] as String? ?? userProfile.email,
       avatarUrl: data['avatarUrl'] as String? ?? data['photo'] as String?,
       dateOfBirth: dob,
       phoneNumber: data['phone'] as String? ?? data['phoneNumber'] as String?,
@@ -280,52 +443,80 @@ class PatientRepositoryImpl implements IPatientRepository {
     );
   }
 
-  /// Parse vitals data to VitalSignEntity list
+  /// Parse legacy vitals data to VitalSignEntity list
   List<VitalSignEntity> _parseVitalSignEntities(Map<String, dynamic> data) {
     final vitalsList = <VitalSignEntity>[];
 
-    final typeMap = {
-      'heartRate': NewVitalSignType.heartRate,
-      'heart_rate': NewVitalSignType.heartRate,
-      'bloodPressure': NewVitalSignType.bloodPressure,
-      'blood_pressure': NewVitalSignType.bloodPressure,
-      'temperature': NewVitalSignType.temperature,
-      'oxygenSaturation': NewVitalSignType.oxygenSaturation,
-      'spo2': NewVitalSignType.oxygenSaturation,
-      'respiratoryRate': NewVitalSignType.respiratoryRate,
-      'respiratory_rate': NewVitalSignType.respiratoryRate,
-      'bloodGlucose': NewVitalSignType.bloodGlucose,
-      'glucose': NewVitalSignType.bloodGlucose,
-      'weight': NewVitalSignType.weight,
-    };
-
     for (final entry in data.entries) {
-      final type = typeMap[entry.key];
-      if (type != null && entry.value != null) {
-        dynamic value = entry.value;
-        DateTime timestamp = DateTime.now();
+      final type = _mapKeyToVitalType(entry.key);
+      if (type == null || entry.value == null) continue;
 
-        // Handle nested format: { "value": 72, "ts": 1234567890 }
-        if (value is Map) {
-          timestamp = DateTime.fromMillisecondsSinceEpoch(
-            (value['ts'] as int?) ?? DateTime.now().millisecondsSinceEpoch,
-          );
-          value = value['value'];
-        }
+      dynamic value = entry.value;
+      DateTime timestamp = DateTime.now();
 
-        final numValue = value is num ? value.toDouble() : null;
-        final isCritical = numValue != null ? !type.isValueNormal(numValue) : false;
-
-        vitalsList.add(VitalSignEntity(
-          type: type,
-          value: value,
-          unit: type.defaultUnit,
-          timestamp: timestamp,
-          isCritical: isCritical,
-        ));
+      // Handle nested format: { "value": 72, "ts": 1234567890 }
+      if (value is Map) {
+        timestamp = DateTime.fromMillisecondsSinceEpoch(
+          (value['ts'] as int?) ?? DateTime.now().millisecondsSinceEpoch,
+        );
+        value = value['value'];
       }
+
+      final numValue = value is num ? value.toDouble() : null;
+      final isCritical = numValue != null ? !type.isValueNormal(numValue) : false;
+
+      vitalsList.add(VitalSignEntity(
+        type: type,
+        value: value,
+        unit: type.defaultUnit,
+        timestamp: timestamp,
+        isCritical: isCritical,
+      ));
     }
 
     return vitalsList;
+  }
+
+  /// Parse legacy history data to VitalSignEntity list
+  List<VitalSignEntity> _parseVitalsHistoryData(List<Map<String, dynamic>> data) {
+    final vitalsList = <VitalSignEntity>[];
+
+    for (final item in data) {
+      final key = item['key'] as String? ?? '';
+      final type = _mapKeyToVitalType(key);
+      if (type == null) continue;
+
+      final value = item['value'];
+      final ts = item['ts'] as int? ?? DateTime.now().millisecondsSinceEpoch;
+      final timestamp = DateTime.fromMillisecondsSinceEpoch(ts);
+
+      final numValue = value is num ? value.toDouble() : null;
+      final isCritical = numValue != null ? !type.isValueNormal(numValue) : false;
+
+      vitalsList.add(VitalSignEntity(
+        type: type,
+        value: value,
+        unit: type.defaultUnit,
+        timestamp: timestamp,
+        isCritical: isCritical,
+      ));
+    }
+
+    vitalsList.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return vitalsList;
+  }
+
+  /// Map telemetry key to VitalSignType
+  NewVitalSignType? _mapKeyToVitalType(String key) {
+    return switch (key.toLowerCase()) {
+      'heartrate' || 'heart_rate' || 'hr' => NewVitalSignType.heartRate,
+      'bloodpressure' || 'blood_pressure' || 'bp' => NewVitalSignType.bloodPressure,
+      'temperature' || 'temp' || 'body_temp' => NewVitalSignType.temperature,
+      'oxygensaturation' || 'spo2' || 'oxygen' => NewVitalSignType.oxygenSaturation,
+      'respiratoryrate' || 'respiratory_rate' || 'rr' => NewVitalSignType.respiratoryRate,
+      'bloodglucose' || 'glucose' || 'bg' => NewVitalSignType.bloodGlucose,
+      'weight' || 'body_weight' => NewVitalSignType.weight,
+      _ => null,
+    };
   }
 }

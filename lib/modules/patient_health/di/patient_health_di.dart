@@ -18,11 +18,16 @@ import 'package:thingsboard_app/thingsboard_client.dart';
 /// Sets up scoped DI using GetIt's pushNewScope pattern.
 /// This ensures proper cleanup when the module is disposed.
 ///
-/// **Development Mode:**
-/// - Uses MockPatientRepository for UI development without backend
-/// - Toggle [useMockData] to switch between mock and real implementations
+/// **Backend Configuration:**
+/// - Base URL: http://167.172.178.76:30003
+/// - Architecture: BFF (Backend for Frontend)
+/// - All API calls go through NestJS, which proxies to ThingsBoard/Medplum
 ///
-/// **Production Mode (BFF Architecture):**
+/// **Development Mode (useMockData = true):**
+/// - Uses MockPatientRepository for UI development without backend
+/// - Useful for UI/UX testing without API dependencies
+///
+/// **Production Mode (useMockData = false):**
 /// - All datasources use NestApiClient to communicate with NestJS server
 /// - NestJS handles ThingsBoard/Medplum authentication server-side
 /// - App only stores NestJS JWT tokens
@@ -31,9 +36,12 @@ class PatientHealthDi {
   PatientHealthDi._();
 
   /// Toggle between mock and real data sources
+  /// 
   /// Set to `true` for UI development without backend
-  /// Set to `false` when NestJS BFF is ready
-  static const bool useMockData = true;
+  /// Set to `false` when using the real NestJS BFF server
+  /// 
+  /// **IMPORTANT:** Set to `false` for production!
+  static const bool useMockData = false; // <-- SWITCHED TO PRODUCTION
 
   /// Initialize the Patient Health module dependencies
   ///
@@ -89,18 +97,35 @@ class PatientHealthDi {
     TbLogger logger,
   ) {
     logger.debug('PatientHealthDi: Using PRODUCTION data sources (NestJS BFF)');
+    logger.debug('PatientHealthDi: API Base URL: ${getIt<NestApiClient>().baseUrl}');
 
     final apiClient = getIt<NestApiClient>();
 
+    // ================================================================
+    // Datasources
+    // ================================================================
+
     // Register NestJS Auth datasource
-    locator.registerFactory<INestAuthRemoteDatasource>(
-      () => NestAuthRemoteDatasource(
-        apiClient: apiClient,
-      ),
+    locator.registerLazySingleton<INestAuthRemoteDatasource>(
+      () => NestAuthRemoteDatasource(apiClient: apiClient),
     );
 
+    // Register Medplum datasource (via NestJS BFF)
+    locator.registerLazySingleton<IMedplumRemoteDatasource>(
+      () => MedplumRemoteDatasource(apiClient: apiClient),
+    );
+
+    // Register ThingsBoard telemetry datasource (via NestJS BFF)
+    locator.registerLazySingleton<ITbTelemetryDatasource>(
+      () => TbTelemetryDatasource(apiClient: apiClient),
+    );
+
+    // ================================================================
+    // Repositories
+    // ================================================================
+
     // Register NestJS Auth repository
-    locator.registerFactory<INestAuthRepository>(
+    locator.registerLazySingleton<INestAuthRepository>(
       () => NestAuthRepository(
         datasource: locator(),
         apiClient: apiClient,
@@ -108,27 +133,19 @@ class PatientHealthDi {
       ),
     );
 
-    // Register Medplum datasource (via NestJS BFF)
-    locator.registerFactory<IMedplumRemoteDatasource>(
-      () => MedplumRemoteDatasource(
-        apiClient: apiClient,
-      ),
-    );
-
-    // Register ThingsBoard telemetry datasource (via NestJS BFF)
-    locator.registerFactory<ITbTelemetryDatasource>(
-      () => TbTelemetryDatasource(
-        apiClient: apiClient,
-      ),
-    );
-
-    // Register Patient repository (real implementation)
-    locator.registerFactory<IPatientRepository>(
+    // Register Patient repository (real implementation with all datasources)
+    locator.registerLazySingleton<IPatientRepository>(
       () => PatientRepositoryImpl(
-        medplumDatasource: locator(),
-        telemetryDatasource: locator(),
+        authDatasource: locator<INestAuthRemoteDatasource>(),
+        medplumDatasource: locator<IMedplumRemoteDatasource>(),
+        telemetryDatasource: locator<ITbTelemetryDatasource>(),
+        logger: logger,
       ),
     );
+
+    // ================================================================
+    // Auth BLoC
+    // ================================================================
 
     // Register Patient Login BLoC (singleton within this scope)
     locator.registerLazySingleton(
@@ -157,4 +174,10 @@ class PatientHealthDi {
     // Drop the scope to cleanup all registered dependencies
     getIt.dropScope(scopeName);
   }
+
+  /// Check if using mock data (useful for UI conditionals)
+  static bool get isMockMode => useMockData;
+
+  /// Check if using production data (useful for UI conditionals)
+  static bool get isProductionMode => !useMockData;
 }
