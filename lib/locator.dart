@@ -25,8 +25,17 @@ import 'package:thingsboard_app/utils/services/overlay_service/i_overlay_service
 import 'package:thingsboard_app/utils/services/overlay_service/overlay_service.dart';
 import 'package:thingsboard_app/utils/services/user/i_user_service.dart';
 import 'package:thingsboard_app/utils/services/user/user_service.dart';
+import 'package:thingsboard_app/modules/patient_health/di/patient_health_di.dart';
 
 final getIt = GetIt.instance;
+
+/// Check if we're in mock mode by checking PatientHealthDi
+/// This is a helper function to avoid circular dependencies
+bool _checkMockMode() {
+  // Check the PatientHealthDi.useMockData flag directly
+  // This is a const, so it's safe to access at compile time
+  return PatientHealthDi.useMockData;
+}
 
 Future<void> setUpRootDependencies() async {
   final secureStorage = createAppStorage() as TbSecureStorage;
@@ -83,10 +92,20 @@ Future<void> setUpRootDependencies() async {
       () => const FlutterSecureStorage(),
     )
     ..registerLazySingleton<NestApiClient>(
-      () => NestApiClient(
-        baseUrl: NestApiConfig.baseUrl,
-        storage: getIt<FlutterSecureStorage>(),
-        logger: getIt<TbLogger>(),
-      ),
+      () {
+        // PATIENT APP: Use dummy URL in mock mode to prevent network calls
+        // Check PatientHealthDi.useMockData to determine if we're in mock mode
+        // Import here to avoid circular dependency issues
+        final isMockMode = _checkMockMode();
+        final baseUrl = isMockMode 
+            ? 'https://mock.local'  // Dummy URL - never actually called
+            : NestApiConfig.baseUrl;
+        
+        return NestApiClient(
+          baseUrl: baseUrl,
+          storage: getIt<FlutterSecureStorage>(),
+          logger: getIt<TbLogger>(),
+        );
+      },
     );
 }

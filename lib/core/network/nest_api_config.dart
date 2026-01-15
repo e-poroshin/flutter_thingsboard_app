@@ -23,10 +23,17 @@ class NestApiConfig {
   /// TODO: Update when production server is ready
   static const String prodBaseUrl = 'http://167.172.178.76:30003';
 
+  /// Mock mode base URL (dummy placeholder to prevent network calls)
+  /// This URL is never actually called - it's just a placeholder
+  static const String mockBaseUrl = 'https://mock.local';
+
   /// Set to true to use production environment
   static const bool useProdEnvironment = false;
 
   /// Get the current base URL based on environment
+  /// 
+  /// **Note:** In mock mode, the baseUrl is set in locator.dart to use mockBaseUrl.
+  /// This getter is used when not in mock mode.
   static String get baseUrl {
     // Check for environment variable override first
     const envUrl = String.fromEnvironment('NEST_API_URL');

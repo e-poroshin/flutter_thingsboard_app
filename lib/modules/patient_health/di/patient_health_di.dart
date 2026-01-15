@@ -41,7 +41,7 @@ class PatientHealthDi {
   /// Set to `false` when using the real NestJS BFF server
   /// 
   /// **IMPORTANT:** Set to `false` for production!
-  static const bool useMockData = false; // <-- SWITCHED TO PRODUCTION
+  static const bool useMockData = true; // <-- SWITCHED TO MOCK MODE FOR UI DEVELOPMENT
 
   /// Initialize the Patient Health module dependencies
   ///

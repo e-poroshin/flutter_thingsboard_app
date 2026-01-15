@@ -17,10 +17,12 @@ import 'package:thingsboard_app/core/auth/login/di/login_di.dart';
 import 'package:thingsboard_app/core/auth/login/login_page_background.dart';
 import 'package:thingsboard_app/core/auth/login/select_region/choose_region_screen.dart';
 import 'package:thingsboard_app/core/auth/login/select_region/model/region.dart';
+import 'package:thingsboard_app/core/auth/mock/mock_auth_helper.dart';
 import 'package:thingsboard_app/core/auth/oauth2/i_oauth2_client.dart';
 import 'package:thingsboard_app/core/context/tb_context_widget.dart';
 import 'package:thingsboard_app/generated/l10n.dart';
 import 'package:thingsboard_app/locator.dart';
+import 'package:thingsboard_app/modules/patient_health/di/patient_health_di.dart';
 import 'package:thingsboard_app/thingsboard_client.dart';
 import 'package:thingsboard_app/utils/services/device_info/i_device_info_service.dart';
 import 'package:thingsboard_app/utils/services/endpoint/i_endpoint_service.dart';
@@ -676,7 +678,18 @@ class _LoginPageState extends TbPageState<LoginPage>
       final String password = formValue['password'].toString();
       _isLoginNotifier.value = true;
       try {
-        await tbClient.login(LoginRequest(username, password));
+        // PATIENT APP: Check if we're in mock mode
+        if (PatientHealthDi.useMockData) {
+          // Use mock authentication (bypasses real backend)
+          log.debug('Login: Using MOCK authentication (backend unavailable)');
+          await MockAuthHelper.performMockLogin(
+            tbClient,
+            email: username,
+          );
+        } else {
+          // Use real authentication
+          await tbClient.login(LoginRequest(username, password));
+        }
       } catch (e) {
         _isLoginNotifier.value = false;
         if (e is! ThingsboardError ||
@@ -692,7 +705,7 @@ class _LoginPageState extends TbPageState<LoginPage>
   }
 
   /// DEBUG: Demo Login - Only available in debug mode
-  /// Automatically fills credentials and logs in to a demo server
+  /// Automatically fills credentials and logs in (uses mock auth if in mock mode)
   Future<void> _demoLogin() async {
     if (!kDebugMode) return;
 
@@ -700,7 +713,43 @@ class _LoginPageState extends TbPageState<LoginPage>
     _isLoginNotifier.value = true;
 
     try {
-      // Step A: Ensure endpoint is set
+      // PATIENT APP: Check if we're in mock mode
+      if (PatientHealthDi.useMockData) {
+        // Use mock authentication (uses demo ThingsBoard server)
+        log.debug('Demo Login: Using MOCK authentication (backend unavailable)');
+        
+        // Fill form fields for visual feedback
+        _loginFormKey.currentState?.fields['username']?.didChange('testclient@thingsboard.io');
+        _loginFormKey.currentState?.fields['password']?.didChange('1qaz!QAZ');
+
+        // Ensure endpoint is set before mock login
+        final endpointService = getIt<IEndpointService>();
+        final currentEndpoint = endpointService.getCachedEndpoint();
+        const demoEndpoint = 'https://demo.thingsboard.io';
+
+        if (currentEndpoint != demoEndpoint) {
+          await endpointService.setEndpoint(demoEndpoint);
+          
+          // Reinitialize TbContext with demo endpoint
+          await tbContext.reInit(
+            endpoint: demoEndpoint,
+            onDone: () {
+              log.debug('Demo Login: TbContext reinitialized for mock mode');
+            },
+            onAuthError: (error) {
+              log.error('Demo Login: Auth error during reinit', error);
+            },
+          );
+        }
+
+        // Perform mock login (uses demo server credentials)
+        await MockAuthHelper.performMockLogin(tbClient);
+
+        log.debug('Demo Login: Mock login successful!');
+        return;
+      }
+
+      // Step A: Ensure endpoint is set (for real demo login)
       final endpointService = getIt<IEndpointService>();
       final currentEndpoint = endpointService.getCachedEndpoint();
 
