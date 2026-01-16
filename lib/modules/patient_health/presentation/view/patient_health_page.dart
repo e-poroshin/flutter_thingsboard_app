@@ -36,6 +36,8 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
   @override
   void initState() {
     super.initState();
+    
+    // Initialize Patient Health module DI
     PatientHealthDi.init(
       _diScopeKey.toString(),
       tbClient: widget.tbContext.tbClient,
@@ -44,12 +46,21 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
 
     // Load patient health data when page initializes
     // Use the current user's ID as the patient ID
-    final userId = widget.tbContext.tbClient.getAuthUser()?.userId;
-    if (userId != null) {
-      getIt<PatientBloc>().add(
-        PatientLoadHealthSummaryEvent(patientId: userId),
-      );
-    }
+    // Dispatch the event after the frame is built to ensure BlocProvider is ready
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final userId = widget.tbContext.tbClient.getAuthUser()?.userId;
+      if (userId != null) {
+        getIt<PatientBloc>().add(
+          PatientLoadHealthSummaryEvent(patientId: userId),
+        );
+      } else {
+        // Fallback: use a default patient ID for mock mode
+        // In mock mode, the repository will return mock data regardless of ID
+        getIt<PatientBloc>().add(
+          const PatientLoadHealthSummaryEvent(patientId: 'mock-patient-001'),
+        );
+      }
+    });
   }
 
   /// PATIENT APP: Test connection to NestJS BFF server

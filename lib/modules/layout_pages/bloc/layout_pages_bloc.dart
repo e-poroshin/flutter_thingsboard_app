@@ -21,6 +21,7 @@ import 'package:thingsboard_app/modules/more/more_page.dart';
 import 'package:thingsboard_app/modules/notification/notification_page.dart';
 import 'package:thingsboard_app/modules/notification/service/notifications_local_service.dart';
 import 'package:thingsboard_app/modules/notification/widgets/notification_icon.dart';
+import 'package:thingsboard_app/modules/patient_health/presentation/view/patient_health_page.dart';
 import 'package:thingsboard_app/modules/url/url_page.dart';
 import 'package:thingsboard_app/thingsboard_client.dart';
 import 'package:thingsboard_app/utils/services/layouts/i_layout_service.dart';
@@ -98,7 +99,9 @@ class LayoutPagesBloc extends Bloc<LayoutPagesEvent, LayoutPagesState> {
   Widget getWidget(PageLayout pageLayout) {
     switch (pageLayout.id) {
       case Pages.home:
-        return HomePage(tbContext);
+        // PATIENT APP: Use native PatientHealthPage instead of WebView Dashboard
+        // This provides a native Flutter UI with mock data for UI development
+        return PatientHealthPage(tbContext);
       case Pages.alarms:
         return AlarmsPage(tbContext);
       case Pages.devices:
