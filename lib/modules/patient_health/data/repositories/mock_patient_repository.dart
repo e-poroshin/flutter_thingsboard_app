@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_sign_entity.dart'
     as new_entities;
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart' as repo;
@@ -123,6 +124,51 @@ class MockPatientRepository implements repo.IPatientRepository {
         timestamp: now.subtract(const Duration(days: 1)),
         isCritical: false,
         deviceId: 'scale-005',
+      ),
+    ];
+  }
+
+  @override
+  Future<List<TaskEntity>> getDailyTasks() async {
+    await _simulateNetworkDelay();
+
+    // Return mock daily tasks for treatment plan
+    return [
+      TaskEntity(
+        id: 'task-001',
+        title: 'Take Vitamin C',
+        time: '08:00 AM',
+        type: TaskType.medication,
+        isCompleted: true,
+        medicationDosage: 1000.0,
+        medicationUnit: 'mg',
+        description: 'Take with breakfast',
+      ),
+      TaskEntity(
+        id: 'task-002',
+        title: 'Measure Blood Pressure',
+        time: '10:00 AM',
+        type: TaskType.measurement,
+        isCompleted: false,
+        description: 'Use home BP monitor',
+      ),
+      TaskEntity(
+        id: 'task-003',
+        title: 'Evening Cardio',
+        time: '06:00 PM',
+        type: TaskType.exercise,
+        isCompleted: false,
+        description: '30 minutes of light cardio',
+      ),
+      TaskEntity(
+        id: 'task-004',
+        title: 'Take Aspirin',
+        time: '08:00 PM',
+        type: TaskType.medication,
+        isCompleted: false,
+        medicationDosage: 81.0,
+        medicationUnit: 'mg',
+        description: 'Low-dose aspirin',
       ),
     ];
   }

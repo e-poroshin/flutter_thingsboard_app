@@ -1,4 +1,5 @@
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_sign_entity.dart';
 
 /// PATIENT APP: Patient Repository Interface (Domain Layer)
@@ -16,6 +17,9 @@ abstract interface class IPatientRepository {
 
   /// Get the latest vital signs for the current patient
   Future<List<VitalSignEntity>> getLatestVitals();
+
+  /// Get daily tasks for the treatment plan
+  Future<List<TaskEntity>> getDailyTasks();
 
   // ============================================================
   // Existing API (for Production with BFF)

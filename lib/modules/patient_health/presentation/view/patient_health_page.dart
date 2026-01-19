@@ -390,7 +390,7 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
                     child: ListTile(
                       leading: _getVitalSignIcon(vital.type),
                       title: Text(_getVitalSignName(vital.type)),
-                      subtitle: Text('${vital.value} ${vital.unit}'),
+                      subtitle: Text(_formatVitalValue(vital.value, vital.unit)),
                       trailing: vital.isNormal
                           ? const Icon(Icons.check_circle, color: Colors.green)
                           : const Icon(Icons.warning, color: Colors.orange),
@@ -448,11 +448,17 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
           child: ListTile(
             leading: _getVitalSignIcon(vital.type),
             title: Text(_getVitalSignName(vital.type)),
-            subtitle: Text('${vital.value} ${vital.unit}'),
+            subtitle: Text(_formatVitalValue(vital.value, vital.unit)),
           ),
         );
       },
     );
+  }
+
+  /// Format vital sign value to 1 decimal place for numeric values
+  String _formatVitalValue(double value, String unit) {
+    // Format to 1 decimal place for numeric values
+    return '${value.toStringAsFixed(1)} $unit';
   }
 
   Widget _buildHistoryView(PatientHistoryLoadedState state) {

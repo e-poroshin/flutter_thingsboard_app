@@ -22,6 +22,7 @@ import 'package:thingsboard_app/modules/notification/notification_page.dart';
 import 'package:thingsboard_app/modules/notification/service/notifications_local_service.dart';
 import 'package:thingsboard_app/modules/notification/widgets/notification_icon.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/view/patient_health_page.dart';
+import 'package:thingsboard_app/modules/patient_health/presentation/view/treatment_page.dart';
 import 'package:thingsboard_app/modules/url/url_page.dart';
 import 'package:thingsboard_app/thingsboard_client.dart';
 import 'package:thingsboard_app/utils/services/layouts/i_layout_service.dart';
@@ -103,7 +104,9 @@ class LayoutPagesBloc extends Bloc<LayoutPagesEvent, LayoutPagesState> {
         // This provides a native Flutter UI with mock data for UI development
         return PatientHealthPage(tbContext);
       case Pages.alarms:
-        return AlarmsPage(tbContext);
+        // PATIENT APP: Replace Alarms with Treatment Plan for patients
+        // This shows daily tasks (medications, measurements, exercises)
+        return TreatmentPage(tbContext);
       case Pages.devices:
         return DevicesMainPage(tbContext);
       case Pages.customers:
@@ -161,7 +164,8 @@ class LayoutPagesBloc extends Bloc<LayoutPagesEvent, LayoutPagesState> {
       case Pages.home:
         return S.of(context).home;
       case Pages.alarms:
-        return S.of(context).alarms(2);
+        // PATIENT APP: Show "Plan" instead of "Alarms" for treatment plan
+        return 'Plan'; // TODO: Add to localization strings
       case Pages.devices:
         return S.of(context).devices(2);
       case Pages.customers:
@@ -191,7 +195,8 @@ class LayoutPagesBloc extends Bloc<LayoutPagesEvent, LayoutPagesState> {
       case Pages.home:
         return Icons.home_outlined;
       case Pages.alarms:
-        return Icons.notifications_outlined;
+        // PATIENT APP: Use checklist icon for Treatment Plan
+        return Icons.checklist;
       case Pages.devices:
         return Icons.devices_other_outlined;
       case Pages.customers:
