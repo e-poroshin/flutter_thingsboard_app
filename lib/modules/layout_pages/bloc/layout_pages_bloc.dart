@@ -22,6 +22,7 @@ import 'package:thingsboard_app/modules/notification/notification_page.dart';
 import 'package:thingsboard_app/modules/notification/service/notifications_local_service.dart';
 import 'package:thingsboard_app/modules/notification/widgets/notification_icon.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/view/patient_health_page.dart';
+import 'package:thingsboard_app/modules/patient_health/presentation/view/profile_page.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/view/treatment_page.dart';
 import 'package:thingsboard_app/modules/url/url_page.dart';
 import 'package:thingsboard_app/thingsboard_client.dart';
@@ -70,15 +71,10 @@ class LayoutPagesBloc extends Bloc<LayoutPagesEvent, LayoutPagesState> {
               title: getLabel(e, event.context),
               icon: getIcon(e),
               path: getPath(e),
-              showAdditionalIcon: e.id == Pages.notifications,
-              additionalIconSmall:
-                  e.id == Pages.notifications
-                      ? notificationSmallNumberWidget()
-                      : null,
-              additionalIconLarge:
-                  e.id == Pages.notifications
-                      ? notificationLargeNumberWidget()
-                      : null,
+              // PATIENT APP: Removed notification badges since we're using Profile instead
+              showAdditionalIcon: false,
+              additionalIconSmall: null,
+              additionalIconLarge: null,
             ),
           )
           .toList(),
@@ -116,7 +112,9 @@ class LayoutPagesBloc extends Bloc<LayoutPagesEvent, LayoutPagesState> {
       case Pages.audit_logs:
         return AuditLogsPage(tbContext);
       case Pages.notifications:
-        return NotificationPage(tbContext);
+        // PATIENT APP: Replace Notifications with Profile for patients
+        // This shows user info, settings, and logout
+        return ProfilePage(tbContext);
       case Pages.device_list:
         return DevicesListPage(tbContext);
       case Pages.dashboards:
@@ -175,7 +173,8 @@ class LayoutPagesBloc extends Bloc<LayoutPagesEvent, LayoutPagesState> {
       case Pages.audit_logs:
         return S.of(context).auditLogs;
       case Pages.notifications:
-        return S.of(context).notifications(2);
+        // PATIENT APP: Show "Profile" instead of "Notifications"
+        return 'Profile'; // TODO: Add to localization strings
       case Pages.device_list:
         return S.of(context).deviceList;
       case Pages.dashboards:
@@ -206,7 +205,8 @@ class LayoutPagesBloc extends Bloc<LayoutPagesEvent, LayoutPagesState> {
       case Pages.audit_logs:
         return Icons.track_changes_outlined;
       case Pages.notifications:
-        return Icons.notifications_active_outlined;
+        // PATIENT APP: Use person icon for Profile
+        return Icons.person;
       case Pages.device_list:
         return Icons.devices;
       case Pages.dashboards:
