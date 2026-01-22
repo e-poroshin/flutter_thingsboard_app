@@ -9,16 +9,27 @@ mixin HasTbContext {
   }
 
   void setupCurrentState(TbContextState currentState) {
-    if (_tbContext.currentState != null) {
-      // ignore: deprecated_member_use
-      ModalRoute.of(_tbContext.currentState!.context)
-          ?.unregisterPopEntry(_tbContext);
+    // Check if the previous state is still mounted before accessing context
+    if (_tbContext.currentState != null && _tbContext.currentState!.mounted) {
+      try {
+        // ignore: deprecated_member_use
+        ModalRoute.of(_tbContext.currentState!.context)
+            ?.unregisterPopEntry(_tbContext);
+      } catch (e) {
+        // Context may be invalid during widget tree transitions
+        // Silently ignore to prevent crashes
+      }
     }
     _tbContext.currentState = currentState;
-    if (_tbContext.currentState != null) {
-      // ignore: deprecated_member_use
-      ModalRoute.of(_tbContext.currentState!.context)
-          ?.registerPopEntry(_tbContext);
+    if (_tbContext.currentState != null && _tbContext.currentState!.mounted) {
+      try {
+        // ignore: deprecated_member_use
+        ModalRoute.of(_tbContext.currentState!.context)
+            ?.registerPopEntry(_tbContext);
+      } catch (e) {
+        // Context may be invalid during widget tree transitions
+        // Silently ignore to prevent crashes
+      }
     }
   }
 
@@ -43,8 +54,17 @@ mixin HasTbContext {
  
 
   void subscribeRouteObserver(TbPageState pageState) {
-    _tbContext.routeObserver
-        .subscribe(pageState, ModalRoute.of(pageState.context)! as PageRoute);
+    if (!pageState.mounted) return;
+    try {
+      final route = ModalRoute.of(pageState.context);
+      if (route != null) {
+        _tbContext.routeObserver
+            .subscribe(pageState, route as PageRoute);
+      }
+    } catch (e) {
+      // Context may be invalid during widget tree transitions
+      // Silently ignore to prevent crashes
+    }
   }
 
   void unsubscribeRouteObserver(TbPageState pageState) {

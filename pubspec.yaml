@@ -78,6 +78,8 @@ dependencies:
   super_tooltip: ^2.1.0
   # PATIENT APP: BFF Network Layer
   dio: ^5.4.0
+  # PATIENT APP: Biometric Authentication (HIPAA Compliance)
+  local_auth: ^2.3.0
 
 dev_dependencies:
   flutter_test:

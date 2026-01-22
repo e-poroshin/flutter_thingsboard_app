@@ -98,8 +98,15 @@ class _MainPageState extends TbPageState<MainPage>
   void initState() {
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      orientation = MediaQuery.of(context).orientation;
-      NotificationService(tbClient, log, tbContext).updateNotificationsCount();
+      if (mounted) {
+        try {
+          orientation = MediaQuery.of(context).orientation;
+          NotificationService(tbClient, log, tbContext).updateNotificationsCount();
+        } catch (e) {
+          // Context may be invalid during widget tree transitions
+          // Silently ignore to prevent crashes
+        }
+      }
     });
 
     super.initState();

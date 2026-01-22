@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:thingsboard_app/core/context/tb_context_widget.dart';
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
+import 'package:thingsboard_app/core/security/biometric_service.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart';
@@ -26,6 +27,7 @@ class _ProfilePageState extends TbContextState<ProfilePage>
   bool _isLoading = true;
   bool _faceIdEnabled = false;
   bool _darkModeEnabled = false;
+  late BiometricService _biometricService;
 
   @override
   bool get wantKeepAlive => true;
@@ -33,6 +35,12 @@ class _ProfilePageState extends TbContextState<ProfilePage>
   @override
   void initState() {
     super.initState();
+
+    // Initialize biometric service
+    _biometricService = BiometricService(
+      storage: getIt(),
+      logger: getIt(),
+    );
 
     // Initialize Patient Health module DI if not already initialized
     if (!getIt.hasScope(_diScopeKey.toString())) {
@@ -43,10 +51,23 @@ class _ProfilePageState extends TbContextState<ProfilePage>
       );
     }
 
-    // Load patient profile when page initializes
+    // Load patient profile and biometric preference when page initializes
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadPatientProfile();
+      _loadBiometricPreference();
     });
+  }
+
+  Future<void> _loadBiometricPreference() async {
+    try {
+      final enabled = await _biometricService.isBiometricEnabled();
+      setState(() {
+        _faceIdEnabled = enabled;
+      });
+    } catch (e) {
+      final logger = getIt<TbLogger>();
+      logger.error('ProfilePage: Error loading biometric preference', e);
+    }
   }
 
   Future<void> _loadPatientProfile() async {
@@ -264,12 +285,7 @@ class _ProfilePageState extends TbContextState<ProfilePage>
                 title: const Text('Enable Face ID'),
                 subtitle: const Text('Use biometric authentication'),
                 value: _faceIdEnabled,
-                onChanged: (value) {
-                  setState(() {
-                    _faceIdEnabled = value;
-                  });
-                  // TODO: Implement Face ID toggle logic
-                },
+                onChanged: _handleBiometricToggle,
                 secondary: const Icon(Icons.face),
               ),
               const Divider(height: 1),
@@ -339,5 +355,75 @@ class _ProfilePageState extends TbContextState<ProfilePage>
         ),
       ),
     );
+  }
+
+  /// Handle biometric toggle with authentication requirement
+  Future<void> _handleBiometricToggle(bool value) async {
+    if (value) {
+      // User wants to enable biometrics - require authentication first
+      final isAvailable = await _biometricService.isBiometricAvailable();
+      
+      if (!isAvailable) {
+        // Show error if biometrics not available
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Biometric authentication is not available on this device.',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Trigger authentication
+      final authenticated = await _biometricService.authenticate(
+        reason: 'Enable biometric authentication to secure your health data',
+      );
+
+      if (authenticated) {
+        // Authentication successful - save preference
+        await _biometricService.setBiometricEnabled(true);
+        setState(() {
+          _faceIdEnabled = true;
+        });
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Biometric authentication enabled'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        // Authentication failed - keep switch off
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Authentication failed. Biometrics not enabled.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      }
+    } else {
+      // User wants to disable biometrics - just save preference
+      await _biometricService.setBiometricEnabled(false);
+      setState(() {
+        _faceIdEnabled = false;
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Biometric authentication disabled'),
+            backgroundColor: Colors.grey,
+          ),
+        );
+      }
+    }
   }
 }

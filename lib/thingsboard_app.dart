@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:thingsboard_app/config/routes/router.dart';
 import 'package:thingsboard_app/config/themes/tb_theme.dart';
+import 'package:thingsboard_app/core/security/lifecycle_manager.dart';
 import 'package:thingsboard_app/generated/l10n.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/utils/services/layouts/i_layout_service.dart';
@@ -28,24 +29,26 @@ class _ThingsBoardAppState extends State<ThingsboardApp> {
 
   @override
   Widget build(BuildContext context) {
-    return ToastificationWrapper(
-      child: MaterialApp(
-        localizationsDelegates: const [
-          S.delegate,
-          GlobalMaterialLocalizations.delegate,
-          GlobalWidgetsLocalizations.delegate,
-          GlobalCupertinoLocalizations.delegate,
-        ],
-        supportedLocales: S.delegate.supportedLocales,
-        onGenerateTitle: (BuildContext context) => S.of(context).appTitle,
-        themeMode: ThemeMode.light,
-        theme: tbTheme,
-        darkTheme: tbDarkTheme,
-        navigatorKey: getIt<ThingsboardAppRouter>().navigatorKey,
-       onGenerateRoute: getIt<ThingsboardAppRouter>().router.generator,
-        navigatorObservers: [
-          getIt<ThingsboardAppRouter>().tbContext.routeObserver,
-        ],
+    return LifecycleManager(
+      child: ToastificationWrapper(
+        child: MaterialApp(
+          localizationsDelegates: const [
+            S.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: S.delegate.supportedLocales,
+          onGenerateTitle: (BuildContext context) => S.of(context).appTitle,
+          themeMode: ThemeMode.light,
+          theme: tbTheme,
+          darkTheme: tbDarkTheme,
+          navigatorKey: getIt<ThingsboardAppRouter>().navigatorKey,
+          onGenerateRoute: getIt<ThingsboardAppRouter>().router.generator,
+          navigatorObservers: [
+            getIt<ThingsboardAppRouter>().tbContext.routeObserver,
+          ],
+        ),
       ),
     );
   }
