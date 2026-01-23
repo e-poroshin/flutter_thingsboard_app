@@ -80,6 +80,8 @@ dependencies:
   dio: ^5.4.0
   # PATIENT APP: Biometric Authentication (HIPAA Compliance)
   local_auth: ^2.3.0
+  # PATIENT APP: Data Visualization
+  fl_chart: ^0.68.0
 
 dev_dependencies:
   flutter_test:

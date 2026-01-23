@@ -5,7 +5,6 @@ import 'package:material_design_icons_flutter/material_design_icons_flutter.dart
 import 'package:thingsboard_app/config/routes/route_not_found_widget.dart';
 import 'package:thingsboard_app/core/context/tb_context.dart';
 import 'package:thingsboard_app/generated/l10n.dart';
-import 'package:thingsboard_app/modules/alarm/presentation/view/alarms_page.dart';
 import 'package:thingsboard_app/modules/asset/assets_page.dart';
 import 'package:thingsboard_app/modules/audit_log/audit_logs_page.dart';
 import 'package:thingsboard_app/modules/customer/customers_page.dart';
@@ -13,12 +12,10 @@ import 'package:thingsboard_app/modules/dashboard/presentation/view/dashboards_p
 import 'package:thingsboard_app/modules/dashboard/presentation/view/single_dashboard_view.dart';
 import 'package:thingsboard_app/modules/device/devices_list_page.dart';
 import 'package:thingsboard_app/modules/device/devices_main_page.dart';
-import 'package:thingsboard_app/modules/home/home_page.dart';
 import 'package:thingsboard_app/modules/layout_pages/bloc/bloc.dart';
 import 'package:thingsboard_app/modules/main/main_item_widget.dart';
 import 'package:thingsboard_app/modules/main/main_navigation_item.dart';
 import 'package:thingsboard_app/modules/more/more_page.dart';
-import 'package:thingsboard_app/modules/notification/notification_page.dart';
 import 'package:thingsboard_app/modules/notification/service/notifications_local_service.dart';
 import 'package:thingsboard_app/modules/notification/widgets/notification_icon.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/view/patient_health_page.dart';

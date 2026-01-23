@@ -1,5 +1,6 @@
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_history_point.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_sign_entity.dart';
 
 /// PATIENT APP: Patient Repository Interface (Domain Layer)
@@ -20,6 +21,11 @@ abstract interface class IPatientRepository {
 
   /// Get daily tasks for the treatment plan
   Future<List<TaskEntity>> getDailyTasks();
+
+  /// Get historical data points for a specific vital sign
+  /// [vitalId] - Identifier for the vital (e.g., "heartRate", "temperature")
+  /// [range] - Time range: "1D" (1 day), "1W" (1 week), "1M" (1 month)
+  Future<List<VitalHistoryPoint>> getVitalHistory(String vitalId, String range);
 
   // ============================================================
   // Existing API (for Production with BFF)

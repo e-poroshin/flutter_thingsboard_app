@@ -7,10 +7,12 @@ import 'package:thingsboard_app/core/network/nest_api_config.dart';
 import 'package:thingsboard_app/core/network/nest_api_exceptions.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/patient_health/di/patient_health_di.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_sign_entity.dart' as domain_entities;
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/bloc/patient_bloc.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/bloc/patient_event.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/bloc/patient_state.dart';
+import 'package:thingsboard_app/modules/patient_health/presentation/view/vital_detail_page.dart';
 import 'package:thingsboard_app/widgets/tb_app_bar.dart';
 
 /// PATIENT APP: Patient Health Page
@@ -218,6 +220,7 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
               PatientHealthLoadedState() => _buildHealthSummaryView(state),
               PatientVitalSignsLoadedState() => _buildVitalSignsView(state),
               PatientHistoryLoadedState() => _buildHistoryView(state),
+              PatientVitalHistoryLoadedState() => _buildInitialView(), // Not used in this page
               PatientErrorState() => _buildErrorView(state),
             };
           },
@@ -387,13 +390,35 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
               )
             else
               ...summary.vitalSigns.map((vital) => Card(
-                    child: ListTile(
-                      leading: _getVitalSignIcon(vital.type),
-                      title: Text(_getVitalSignName(vital.type)),
-                      subtitle: Text(_formatVitalValue(vital.value, vital.unit)),
-                      trailing: vital.isNormal
-                          ? const Icon(Icons.check_circle, color: Colors.green)
-                          : const Icon(Icons.warning, color: Colors.orange),
+                    child: InkWell(
+                      onTap: () {
+                        // Navigate to vital detail page
+                        // Convert old VitalSignType to new VitalSignType enum
+                        final newVitalType = _convertVitalSignType(vital.type);
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => VitalDetailPage(
+                              widget.tbContext,
+                              vitalType: newVitalType,
+                            ),
+                          ),
+                        );
+                      },
+                      child: ListTile(
+                        leading: _getVitalSignIcon(vital.type),
+                        title: Text(_getVitalSignName(vital.type)),
+                        subtitle: Text(_formatVitalValue(vital.value, vital.unit)),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            vital.isNormal
+                                ? const Icon(Icons.check_circle, color: Colors.green)
+                                : const Icon(Icons.warning, color: Colors.orange),
+                            const SizedBox(width: 8),
+                            const Icon(Icons.chevron_right, color: Colors.grey),
+                          ],
+                        ),
+                      ),
                     ),
                   )),
 
@@ -453,6 +478,27 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
         );
       },
     );
+  }
+
+  /// Convert old VitalSignType (from repository) to new VitalSignType (from domain entities)
+  domain_entities.VitalSignType _convertVitalSignType(VitalSignType oldType) {
+    switch (oldType) {
+      case VitalSignType.heartRate:
+        return domain_entities.VitalSignType.heartRate;
+      case VitalSignType.bloodPressureSystolic:
+      case VitalSignType.bloodPressureDiastolic:
+        return domain_entities.VitalSignType.bloodPressure;
+      case VitalSignType.temperature:
+        return domain_entities.VitalSignType.temperature;
+      case VitalSignType.oxygenSaturation:
+        return domain_entities.VitalSignType.oxygenSaturation;
+      case VitalSignType.respiratoryRate:
+        return domain_entities.VitalSignType.respiratoryRate;
+      case VitalSignType.bloodGlucose:
+        return domain_entities.VitalSignType.bloodGlucose;
+      case VitalSignType.weight:
+        return domain_entities.VitalSignType.weight;
+    }
   }
 
   /// Format vital sign value to 1 decimal place for numeric values

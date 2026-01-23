@@ -5,6 +5,7 @@ import 'package:thingsboard_app/modules/patient_health/data/datasources/tb_telem
 import 'package:thingsboard_app/modules/patient_health/data/models/models.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_history_point.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_sign_entity.dart'
     as vitals;
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart';
@@ -128,6 +129,19 @@ class PatientRepositoryImpl implements IPatientRepository {
     // TODO: Implement real API call to fetch daily tasks from NestJS BFF
     // For now, return empty list - this will be implemented when backend is ready
     logger?.warn('PatientRepositoryImpl: getDailyTasks() not yet implemented - returning empty list');
+    return [];
+  }
+
+  @override
+  Future<List<VitalHistoryPoint>> getVitalHistory(
+    String vitalId,
+    String range,
+  ) async {
+    // TODO: Implement real API call to fetch vital history from NestJS BFF
+    // For now, return empty list - this will be implemented when backend is ready
+    logger?.warn(
+      'PatientRepositoryImpl: getVitalHistory() not yet implemented - returning empty list',
+    );
     return [];
   }
 

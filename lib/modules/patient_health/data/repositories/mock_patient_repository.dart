@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_history_point.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_sign_entity.dart'
     as new_entities;
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart' as repo;
@@ -126,6 +127,112 @@ class MockPatientRepository implements repo.IPatientRepository {
         deviceId: 'scale-005',
       ),
     ];
+  }
+
+  @override
+  Future<List<VitalHistoryPoint>> getVitalHistory(
+    String vitalId,
+    String range,
+  ) async {
+    await _simulateNetworkDelay();
+
+    final now = DateTime.now();
+    final List<VitalHistoryPoint> points = [];
+
+    // Determine base value and range based on vital type
+    final vitalType = _getVitalTypeFromId(vitalId);
+    final (baseValue, minValue, maxValue) = _getVitalRange(vitalType);
+
+    if (range == '1D') {
+      // Generate 24 points (one per hour for last 24 hours)
+      for (int i = 23; i >= 0; i--) {
+        final timestamp = now.subtract(Duration(hours: i));
+        // Add some realistic variation with slight trend
+        final variation = _randomDoubleInRange(-5, 5);
+        final trend = (23 - i) * 0.2; // Slight upward trend
+        final value = (baseValue + variation + trend)
+            .clamp(minValue, maxValue)
+            .toDouble();
+        points.add(VitalHistoryPoint(
+          timestamp: timestamp,
+          value: value,
+        ));
+      }
+    } else if (range == '1W') {
+      // Generate 7 points (one per day for last 7 days)
+      for (int i = 6; i >= 0; i--) {
+        final timestamp = now.subtract(Duration(days: i));
+        final variation = _randomDoubleInRange(-8, 8);
+        final trend = (6 - i) * 0.3; // Slight upward trend
+        final value = (baseValue + variation + trend)
+            .clamp(minValue, maxValue)
+            .toDouble();
+        points.add(VitalHistoryPoint(
+          timestamp: timestamp,
+          value: value,
+        ));
+      }
+    } else if (range == '1M') {
+      // Generate ~30 points (one per day for last 30 days)
+      for (int i = 29; i >= 0; i--) {
+        final timestamp = now.subtract(Duration(days: i));
+        final variation = _randomDoubleInRange(-10, 10);
+        final trend = (29 - i) * 0.1; // Very slight upward trend
+        final value = (baseValue + variation + trend)
+            .clamp(minValue, maxValue)
+            .toDouble();
+        points.add(VitalHistoryPoint(
+          timestamp: timestamp,
+          value: value,
+        ));
+      }
+    }
+
+    return points;
+  }
+
+  /// Helper to get vital type from ID string
+  new_entities.VitalSignType _getVitalTypeFromId(String vitalId) {
+    // Map common vital IDs to types
+    final idLower = vitalId.toLowerCase();
+    if (idLower.contains('heart') || idLower.contains('hr') || idLower.contains('pulse')) {
+      return new_entities.VitalSignType.heartRate;
+    } else if (idLower.contains('temp') || idLower.contains('temperature')) {
+      return new_entities.VitalSignType.temperature;
+    } else if (idLower.contains('oxygen') || idLower.contains('spo2') || idLower.contains('o2')) {
+      return new_entities.VitalSignType.oxygenSaturation;
+    } else if (idLower.contains('respiratory') || idLower.contains('rr')) {
+      return new_entities.VitalSignType.respiratoryRate;
+    } else if (idLower.contains('glucose') || idLower.contains('sugar')) {
+      return new_entities.VitalSignType.bloodGlucose;
+    } else if (idLower.contains('weight')) {
+      return new_entities.VitalSignType.weight;
+    } else {
+      // Default to heart rate
+      return new_entities.VitalSignType.heartRate;
+    }
+  }
+
+  /// Get base value and range for a vital type
+  (double baseValue, double minValue, double maxValue) _getVitalRange(
+    new_entities.VitalSignType type,
+  ) {
+    switch (type) {
+      case new_entities.VitalSignType.heartRate:
+        return (75.0, 60.0, 100.0);
+      case new_entities.VitalSignType.temperature:
+        return (36.5, 35.5, 38.0);
+      case new_entities.VitalSignType.oxygenSaturation:
+        return (98.0, 95.0, 100.0);
+      case new_entities.VitalSignType.respiratoryRate:
+        return (16.0, 12.0, 20.0);
+      case new_entities.VitalSignType.bloodGlucose:
+        return (100.0, 70.0, 140.0);
+      case new_entities.VitalSignType.weight:
+        return (72.0, 70.0, 75.0);
+      default:
+        return (75.0, 60.0, 100.0);
+    }
   }
 
   @override

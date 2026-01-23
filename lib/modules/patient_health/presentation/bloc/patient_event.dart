@@ -52,3 +52,16 @@ final class PatientLoadHistoryEvent extends PatientEvent {
   List<Object?> get props => [patientId, startDate, endDate];
 }
 
+/// Event to load vital history for charting
+final class PatientLoadVitalHistoryEvent extends PatientEvent {
+  const PatientLoadVitalHistoryEvent({
+    required this.vitalId,
+    required this.range,
+  });
+
+  final String vitalId;
+  final String range; // "1D", "1W", "1M"
+
+  @override
+  List<Object?> get props => [vitalId, range];
+}

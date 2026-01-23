@@ -18,6 +18,7 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
     on<PatientRefreshEvent>(_onRefresh);
     on<PatientLoadVitalSignsEvent>(_onLoadVitalSigns);
     on<PatientLoadHistoryEvent>(_onLoadHistory);
+    on<PatientLoadVitalHistoryEvent>(_onLoadVitalHistory);
   }
 
   final IPatientRepository repository;
@@ -111,6 +112,49 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
       logger.error('PatientBloc: Error loading history', e, s);
       emit(PatientErrorState(
         message: 'Failed to load health history',
+        exception: e,
+      ));
+    }
+  }
+
+  Future<void> _onLoadVitalHistory(
+    PatientLoadVitalHistoryEvent event,
+    Emitter<PatientState> emit,
+  ) async {
+    logger.debug(
+      'PatientBloc: Loading vital history for ${event.vitalId} '
+      'with range ${event.range}',
+    );
+    emit(const PatientLoadingState());
+
+    try {
+      final historyPoints = await repository.getVitalHistory(
+        event.vitalId,
+        event.range,
+      );
+
+      // Calculate current value (average of last few points or latest)
+      double? currentValue;
+      if (historyPoints.isNotEmpty) {
+        final recentPoints = historyPoints.length > 5
+            ? historyPoints.sublist(historyPoints.length - 5)
+            : historyPoints;
+        currentValue = recentPoints
+            .map((p) => p.value)
+            .reduce((a, b) => a + b) /
+            recentPoints.length;
+      }
+
+      emit(PatientVitalHistoryLoadedState(
+        vitalId: event.vitalId,
+        range: event.range,
+        historyPoints: historyPoints,
+        currentValue: currentValue,
+      ));
+    } catch (e, s) {
+      logger.error('PatientBloc: Error loading vital history', e, s);
+      emit(PatientErrorState(
+        message: 'Failed to load vital history',
         exception: e,
       ));
     }

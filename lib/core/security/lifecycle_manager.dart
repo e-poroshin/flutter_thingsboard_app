@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:thingsboard_app/core/context/tb_context_widget.dart';
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
 import 'package:thingsboard_app/core/security/biometric_service.dart';
 import 'package:thingsboard_app/locator.dart';

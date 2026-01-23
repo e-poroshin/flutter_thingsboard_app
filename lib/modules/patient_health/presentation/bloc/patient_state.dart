@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_history_point.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart';
 
 /// PATIENT APP: Patient Health BLoC States
@@ -56,6 +57,24 @@ final class PatientHistoryLoadedState extends PatientState {
 
   @override
   List<Object?> get props => [history];
+}
+
+/// State when vital history is loaded for charting
+final class PatientVitalHistoryLoadedState extends PatientState {
+  const PatientVitalHistoryLoadedState({
+    required this.vitalId,
+    required this.range,
+    required this.historyPoints,
+    this.currentValue,
+  });
+
+  final String vitalId;
+  final String range;
+  final List<VitalHistoryPoint> historyPoints;
+  final double? currentValue; // Latest/average value for display
+
+  @override
+  List<Object?> get props => [vitalId, range, historyPoints, currentValue];
 }
 
 /// Error state when something goes wrong

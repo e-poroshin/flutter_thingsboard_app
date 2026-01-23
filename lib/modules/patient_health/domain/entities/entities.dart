@@ -4,5 +4,6 @@
 
 export 'patient_entity.dart';
 export 'task_entity.dart';
+export 'vital_history_point.dart';
 export 'vital_sign_entity.dart';
 
