@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -246,8 +247,42 @@ class _VitalDetailPageState extends TbContextState<VitalDetailPage> {
     final values = points.map((p) => p.value).toList();
     final minValue = values.reduce((a, b) => a < b ? a : b);
     final maxValue = values.reduce((a, b) => a > b ? a : b);
-    final yMin = (minValue * 0.9).clamp(0, double.infinity);
-    final yMax = (maxValue * 1.1);
+    
+    // Calculate Y-axis bounds with padding
+    final yRange = maxValue - minValue;
+    final padding = yRange > 0 ? (yRange * 0.1) : (maxValue * 0.1).clamp(1.0, double.infinity);
+    final yMin = (minValue - padding).clamp(0, double.infinity);
+    final yMax = maxValue + padding;
+    
+    // Calculate a "nice" interval that prevents label overlap
+    // This ensures labels are at round numbers and spaced appropriately
+    final rawRange = yMax - yMin;
+    final rawInterval = rawRange > 0 ? (rawRange / 4) : 1.0; // Target 4-5 labels max
+    
+    // Round interval to a "nice" number (1, 2, 5, 10, 20, 50, 100, etc.)
+    final ln10 = math.log(10);
+    final magnitude = (rawInterval.abs() < 1) 
+        ? 1.0 
+        : math.pow(10, (math.log(rawInterval.abs()) / ln10).floor()).toDouble();
+    final normalizedInterval = rawInterval / magnitude;
+    
+    double niceInterval;
+    if (normalizedInterval <= 1) {
+      niceInterval = magnitude;
+    } else if (normalizedInterval <= 2) {
+      niceInterval = 2 * magnitude;
+    } else if (normalizedInterval <= 5) {
+      niceInterval = 5 * magnitude;
+    } else {
+      niceInterval = 10 * magnitude;
+    }
+    
+    // Ensure minimum interval to prevent too many labels
+    final finalInterval = niceInterval.clamp(1.0, double.infinity);
+    
+    // Round min/max to nice intervals to ensure clean labels
+    final niceMin = (yMin / finalInterval).floor() * finalInterval;
+    final niceMax = ((yMax / finalInterval).ceil() * finalInterval).clamp(niceMin + finalInterval, double.infinity);
 
     // Format X-axis labels
     String getXLabel(int index) {
@@ -282,7 +317,7 @@ class _VitalDetailPageState extends TbContextState<VitalDetailPage> {
           gridData: FlGridData(
             show: true,
             drawVerticalLine: false,
-            horizontalInterval: (yMax - yMin) / 5,
+            horizontalInterval: finalInterval,
             getDrawingHorizontalLine: (value) {
               return FlLine(
                 color: Colors.grey.withOpacity(0.2),
@@ -324,14 +359,47 @@ class _VitalDetailPageState extends TbContextState<VitalDetailPage> {
             leftTitles: AxisTitles(
               sideTitles: SideTitles(
                 showTitles: true,
-                reservedSize: 50,
-                interval: (yMax - yMin) / 5,
+                reservedSize: 70, // Increased significantly to prevent text overlap
+                interval: finalInterval, // Use calculated nice interval
                 getTitlesWidget: (value, meta) {
-                  return Text(
-                    value.toStringAsFixed(0),
-                    style: const TextStyle(
-                      color: Colors.grey,
-                      fontSize: 10,
+                  // Only show labels at exact interval positions to prevent overlap
+                  // Check if value is at an exact interval position (within small tolerance)
+                  final normalizedValue = value - niceMin;
+                  final intervalPosition = normalizedValue / finalInterval;
+                  
+                  // Only show label if value is very close to an exact interval position
+                  // This prevents duplicate/overlapping labels
+                  if ((intervalPosition - intervalPosition.round()).abs() > 0.01) {
+                    return const SizedBox.shrink();
+                  }
+                  
+                  // Use the exact interval-aligned value for display
+                  final displayValue = (intervalPosition.round() * finalInterval) + niceMin;
+                  
+                  // Format numbers to prevent long labels
+                  String formattedValue;
+                  if (displayValue.abs() >= 1000) {
+                    formattedValue = '${(displayValue / 1000).toStringAsFixed(1)}k';
+                  } else if (displayValue % 1 == 0) {
+                    formattedValue = displayValue.toInt().toString();
+                  } else {
+                    // Determine decimal places based on interval
+                    final ln10 = math.log(10);
+                    final decimalPlaces = finalInterval < 1 
+                        ? (math.log(1 / finalInterval) / ln10).ceil().clamp(0, 2)
+                        : 0;
+                    formattedValue = displayValue.toStringAsFixed(decimalPlaces);
+                  }
+                  
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 10.0),
+                    child: Text(
+                      formattedValue,
+                      style: const TextStyle(
+                        color: Colors.grey,
+                        fontSize: 11,
+                      ),
+                      textAlign: TextAlign.right,
                     ),
                   );
                 },
@@ -343,8 +411,8 @@ class _VitalDetailPageState extends TbContextState<VitalDetailPage> {
           ),
           minX: 0,
           maxX: (points.length - 1).toDouble(),
-          minY: yMin.toDouble(),
-          maxY: yMax.toDouble(),
+          minY: niceMin,
+          maxY: niceMax,
           lineBarsData: [
             LineChartBarData(
               spots: spots,
