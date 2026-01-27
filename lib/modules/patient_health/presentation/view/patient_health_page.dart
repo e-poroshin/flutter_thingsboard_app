@@ -28,9 +28,11 @@ class PatientHealthPage extends TbContextWidget {
 }
 
 class _PatientHealthPageState extends TbContextState<PatientHealthPage>
-    with AutomaticKeepAliveClientMixin<PatientHealthPage> {
+    with AutomaticKeepAliveClientMixin<PatientHealthPage>, WidgetsBindingObserver {
   final _diScopeKey = UniqueKey();
   bool _isTestingConnection = false;
+  bool _hasInitialized = false;
+  bool _isPageVisible = true; // Track if this page is actually visible
 
   @override
   bool get wantKeepAlive => true;
@@ -38,6 +40,7 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     
     // Initialize Patient Health module DI
     PatientHealthDi.init(
@@ -50,19 +53,104 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
     // Use the current user's ID as the patient ID
     // Dispatch the event after the frame is built to ensure BlocProvider is ready
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final userId = widget.tbContext.tbClient.getAuthUser()?.userId;
-      if (userId != null) {
-        getIt<PatientBloc>().add(
-          PatientLoadHealthSummaryEvent(patientId: userId),
-        );
-      } else {
-        // Fallback: use a default patient ID for mock mode
-        // In mock mode, the repository will return mock data regardless of ID
-        getIt<PatientBloc>().add(
-          const PatientLoadHealthSummaryEvent(patientId: 'mock-patient-001'),
-        );
-      }
+      _hasInitialized = true;
+      _isPageVisible = true;
+      _loadHealthDataIfNeeded();
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    PatientHealthDi.dispose(_diScopeKey.toString());
+    super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    
+    // Update visibility status
+    _isPageVisible = ModalRoute.of(context)?.isCurrent ?? true;
+    
+    // Reload data when page becomes visible again (e.g., navigating back from detail page)
+    // This ensures the page refreshes even if it was kept alive by AutomaticKeepAliveClientMixin
+    // Use a small delay to avoid calling too frequently during widget tree rebuilds
+    if (_hasInitialized && mounted && _isPageVisible) {
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted && (ModalRoute.of(context)?.isCurrent ?? false)) {
+          _loadHealthDataIfNeeded();
+        }
+      });
+    }
+  }
+
+  /// Load health data only if needed (prevents infinite loading on back navigation)
+  /// Checks current BLoC state and only dispatches if:
+  /// - State is PatientInitialState (no data loaded yet)
+  /// - State is PatientErrorState (previous load failed, allow retry)
+  /// - State is PatientVitalHistoryLoadedState (user came back from detail page)
+  /// - State is PatientLoadingState but we're not actually loading (stuck state)
+  /// Does NOT dispatch if state is already PatientHealthLoadedState (prevents flickering)
+  void _loadHealthDataIfNeeded() {
+    if (!mounted) return;
+    
+    final bloc = getIt<PatientBloc>();
+    final currentState = bloc.state;
+    
+    // If we already have health summary data loaded, don't reload
+    // This prevents flickering when the page is already showing data
+    if (currentState is PatientHealthLoadedState) {
+      widget.tbContext.log.debug(
+        'PatientHealthPage: Health data already loaded, skipping reload',
+      );
+      return;
+    }
+
+    // Always reload if we're in one of these states:
+    // - Initial state (first load)
+    // - Error state (retry after failure)
+    // - Vital history state (user came back from detail page - need to show summary again)
+    // - Loading state (might be stuck, but we'll let it complete or timeout)
+    final shouldLoad = currentState is PatientInitialState ||
+        currentState is PatientErrorState ||
+        currentState is PatientVitalHistoryLoadedState;
+
+    if (!shouldLoad) {
+      // If we're in loading state, wait a bit to see if it completes
+      // Otherwise, log and return
+      if (currentState is PatientLoadingState) {
+        widget.tbContext.log.debug(
+          'PatientHealthPage: Currently loading, waiting for completion...',
+        );
+        return;
+      }
+      
+      widget.tbContext.log.debug(
+        'PatientHealthPage: Current state is ${currentState.runtimeType}, '
+        'not loading health data',
+      );
+      return;
+    }
+
+    final userId = widget.tbContext.tbClient.getAuthUser()?.userId;
+    if (userId != null) {
+      widget.tbContext.log.debug(
+        'PatientHealthPage: Loading health summary for user $userId '
+        '(state: ${currentState.runtimeType})',
+      );
+      bloc.add(PatientLoadHealthSummaryEvent(patientId: userId));
+    } else {
+      // Fallback: use a default patient ID for mock mode
+      // In mock mode, the repository will return mock data regardless of ID
+      widget.tbContext.log.debug(
+        'PatientHealthPage: Loading health summary for mock patient '
+        '(state: ${currentState.runtimeType})',
+      );
+      bloc.add(
+        const PatientLoadHealthSummaryEvent(patientId: 'mock-patient-001'),
+      );
+    }
   }
 
   /// PATIENT APP: Test connection to NestJS BFF server
@@ -182,18 +270,51 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
   }
 
   @override
-  void dispose() {
-    PatientHealthDi.dispose(_diScopeKey.toString());
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     super.build(context);
 
+    final bloc = getIt<PatientBloc>();
+
+    // Update visibility status
+    _isPageVisible = ModalRoute.of(context)?.isCurrent ?? true;
+    
+    // Check current state and reload if needed (handles case when navigating back)
+    // BUT only if this page is actually visible (not when detail page is showing)
+    // This prevents PatientHealthPage from interfering when VitalDetailPage is loading data
+    final currentState = bloc.state;
+    if (currentState is PatientVitalHistoryLoadedState && 
+        _hasInitialized && 
+        mounted && 
+        _isPageVisible) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        // Double-check visibility before reloading to prevent race conditions
+        if (mounted && (ModalRoute.of(context)?.isCurrent ?? false)) {
+          _loadHealthDataIfNeeded();
+        }
+      });
+    }
+
     return BlocProvider<PatientBloc>.value(
-      value: getIt(),
-      child: Scaffold(
+      value: bloc,
+      child: BlocListener<PatientBloc, PatientState>(
+        listener: (context, state) {
+          // When user navigates back from VitalDetailPage, the state will be
+          // PatientVitalHistoryLoadedState. We need to reload the health summary.
+          // BUT only if this page is actually visible (not when detail page is showing)
+          // This prevents PatientHealthPage from interfering when VitalDetailPage is loading data
+          if (state is PatientVitalHistoryLoadedState && 
+              _hasInitialized && 
+              mounted) {
+            // Check visibility before reloading
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final isCurrentlyVisible = ModalRoute.of(context)?.isCurrent ?? false;
+              if (mounted && isCurrentlyVisible) {
+                _loadHealthDataIfNeeded();
+              }
+            });
+          }
+        },
+        child: Scaffold(
         appBar: TbAppBar(
           tbContext,
           title: const Text(
@@ -226,7 +347,7 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
           },
         ),
       ),
-    );
+    ));
   }
 
   Widget _buildInitialView() {
