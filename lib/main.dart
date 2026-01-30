@@ -15,6 +15,7 @@ import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/thingsboard_app.dart';
 import 'package:thingsboard_app/utils/services/firebase/i_firebase_service.dart';
 import 'package:thingsboard_app/utils/services/local_database/i_local_database_service.dart';
+import 'package:thingsboard_app/core/services/notification/notification_service.dart';
 import 'package:universal_platform/universal_platform.dart';
 
 void main() async {
@@ -29,12 +30,16 @@ void main() async {
     );
   }
 
+  // Firebase initialization (optional - may not be configured)
   try {
     getIt<IFirebaseService>().initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
   } catch (e) {
-    log('main::FirebaseService.initializeApp() exception $e', error: e);
+    // Firebase not configured yet - skipping (this is expected if google-services.json is missing)
+    if (kDebugMode) {
+      log('main::Firebase not configured yet - skipping initialization');
+    }
   }
 
   try {
@@ -44,6 +49,17 @@ void main() async {
     }
   } catch (e) {
     log('main::getInitialUri() exception $e', error: e);
+  }
+
+  // PATIENT APP: Initialize Notification Service
+  try {
+    final notificationService = getIt<INotificationService>();
+    await notificationService.init();
+    await notificationService.requestPermissions();
+    log('main::NotificationService initialized successfully');
+  } catch (e) {
+    log('main::NotificationService initialization exception $e', error: e);
+    // Don't fail app startup if notification service fails to initialize
   }
 
   if (kDebugMode || EnvironmentVariables.verbose) {

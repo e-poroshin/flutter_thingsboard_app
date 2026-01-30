@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:thingsboard_app/core/context/tb_context_widget.dart';
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
+import 'package:thingsboard_app/core/services/notification/notification_service.dart';
+import 'package:thingsboard_app/core/services/notification/task_notification_helper.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart';
@@ -42,10 +44,25 @@ class _TreatmentPageState extends TbContextState<TreatmentPage>
       );
     }
 
-    // Load daily tasks when page initializes
+    // Request notification permissions when page loads
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _requestNotificationPermissions();
       _loadDailyTasks();
     });
+  }
+
+  Future<void> _requestNotificationPermissions() async {
+    try {
+      final notificationService = getIt<INotificationService>();
+      await notificationService.requestPermissions();
+    } catch (e, s) {
+      final logger = getIt<TbLogger>();
+      logger.warn(
+        'TreatmentPage: Error requesting notification permissions',
+        e,
+        s,
+      );
+    }
   }
 
   Future<void> _loadDailyTasks() async {
@@ -57,6 +74,26 @@ class _TreatmentPageState extends TbContextState<TreatmentPage>
     try {
       final repository = getIt<IPatientRepository>();
       final tasks = await repository.getDailyTasks();
+      
+      // Schedule notifications for incomplete tasks
+      try {
+        final notificationService = getIt<INotificationService>();
+        final logger = getIt<TbLogger>();
+        final notificationHelper = TaskNotificationHelper(
+          notificationService: notificationService,
+          logger: logger,
+        );
+        await notificationHelper.scheduleTaskNotifications(tasks);
+      } catch (e, s) {
+        // Log but don't fail the entire task loading if notification scheduling fails
+        final logger = getIt<TbLogger>();
+        logger.warn(
+          'TreatmentPage: Error scheduling notifications',
+          e,
+          s,
+        );
+      }
+      
       setState(() {
         _tasks = tasks;
         _isLoading = false;
@@ -232,12 +269,25 @@ class _TreatmentPageState extends TbContextState<TreatmentPage>
                   color: Colors.grey[600],
                 ),
                 const SizedBox(width: 4),
-                Text(
-                  task.time,
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                  ),
+                // Time with alarm icon - prominently displayed
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.alarm,
+                      size: 14,
+                      color: Colors.orange,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      task.time,
+                      style: TextStyle(
+                        color: Colors.grey[800],
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(width: 8),
                 Container(

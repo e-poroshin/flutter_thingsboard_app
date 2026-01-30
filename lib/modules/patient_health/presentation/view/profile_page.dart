@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:thingsboard_app/core/context/tb_context_widget.dart';
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
 import 'package:thingsboard_app/core/security/biometric_service.dart';
+import 'package:thingsboard_app/core/services/notification/notification_service.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart';
@@ -303,6 +304,14 @@ class _ProfilePageState extends TbContextState<ProfilePage>
               ),
               const Divider(height: 1),
               ListTile(
+                title: const Text('Test Notification'),
+                subtitle: const Text('Test notification (5s delay)'),
+                leading: const Icon(Icons.notifications_active, color: Colors.blue),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _testNotification,
+              ),
+              const Divider(height: 1),
+              ListTile(
                 title: const Text('Help & Support'),
                 subtitle: const Text('Get help and contact support'),
                 leading: const Icon(Icons.help_outline),
@@ -421,6 +430,44 @@ class _ProfilePageState extends TbContextState<ProfilePage>
           const SnackBar(
             content: Text('Biometric authentication disabled'),
             backgroundColor: Colors.grey,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Test notification functionality
+  Future<void> _testNotification() async {
+    try {
+      final notificationService = getIt<INotificationService>();
+      
+      // Schedule a test notification in 5 seconds
+      await notificationService.scheduleTaskReminder(
+        999, // Test ID
+        'Test Notification',
+        'This is a test alarm to verify the system works.',
+        DateTime.now().add(const Duration(seconds: 5)),
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Test notification scheduled! Wait 5 seconds...'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e, s) {
+      final logger = getIt<TbLogger>();
+      logger.error('ProfilePage: Error scheduling test notification', e, s);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
           ),
         );
       }
