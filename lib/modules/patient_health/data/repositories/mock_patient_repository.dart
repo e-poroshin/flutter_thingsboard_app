@@ -1,5 +1,7 @@
 import 'dart:math';
 
+import 'package:thingsboard_app/modules/patient_health/data/datasources/patient_local_datasource.dart';
+import 'package:thingsboard_app/modules/patient_health/data/models/task_hive_model.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_history_point.dart';
@@ -22,6 +24,7 @@ class MockPatientRepository implements repo.IPatientRepository {
   MockPatientRepository({
     this.simulatedLatency = const Duration(seconds: 1),
     this.shouldSimulateError = false,
+    this.localDatasource,
   });
 
   /// Duration to simulate network latency
@@ -29,6 +32,10 @@ class MockPatientRepository implements repo.IPatientRepository {
 
   /// If true, all methods will throw an error (for testing error states)
   final bool shouldSimulateError;
+
+  /// Optional local datasource for task persistence
+  /// If provided, tasks will be persisted to local storage
+  final PatientLocalDatasource? localDatasource;
 
   final _random = Random();
 
@@ -239,7 +246,33 @@ class MockPatientRepository implements repo.IPatientRepository {
   Future<List<TaskEntity>> getDailyTasks() async {
     await _simulateNetworkDelay();
 
-    // Return mock daily tasks for treatment plan
+    // If local datasource is available, use it for persistence
+    if (localDatasource != null) {
+      try {
+        final localTasks = await localDatasource!.getTasks();
+        if (localTasks.isNotEmpty) {
+          // Return persisted tasks
+          return localTasks.map((model) => model.toEntity()).toList();
+        }
+        // If empty, seed with default tasks and return them
+        final defaultTasks = _getDefaultTasks();
+        final hiveModels = defaultTasks
+            .map((task) => TaskHiveModel.fromEntity(task))
+            .toList();
+        await localDatasource!.cacheTasks(hiveModels);
+        return defaultTasks;
+      } catch (e) {
+        // If local storage fails, fall back to mock data
+        return _getDefaultTasks();
+      }
+    }
+
+    // Return mock daily tasks for treatment plan (no persistence)
+    return _getDefaultTasks();
+  }
+
+  /// Get default mock tasks
+  List<TaskEntity> _getDefaultTasks() {
     return [
       TaskEntity(
         id: 'task-001',
@@ -278,6 +311,23 @@ class MockPatientRepository implements repo.IPatientRepository {
         description: 'Low-dose aspirin',
       ),
     ];
+  }
+
+  @override
+  Future<void> addTask(TaskEntity task) async {
+    await _simulateNetworkDelay();
+    
+    // If local datasource is available, persist the task
+    if (localDatasource != null) {
+      try {
+        final hiveModel = TaskHiveModel.fromEntity(task);
+        await localDatasource!.saveTask(hiveModel);
+      } catch (e) {
+        // If persistence fails, just log and continue
+        // Task won't be persisted but won't crash the app
+      }
+    }
+    // Note: If no local datasource, task is not persisted (mock mode without storage)
   }
 
   // ============================================================

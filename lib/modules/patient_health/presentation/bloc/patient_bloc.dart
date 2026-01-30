@@ -191,6 +191,19 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
         updatedTasks = List.from(_currentTasks);
       }
 
+      // Save task to repository (persists to local storage)
+      try {
+        await repository.addTask(event.task);
+        logger.debug('PatientBloc: Task saved to repository');
+      } catch (e, s) {
+        logger.warn(
+          'PatientBloc: Error saving task to repository (continuing anyway)',
+          e,
+          s,
+        );
+        // Continue even if save fails - task is still added to state
+      }
+
       // Add the new task
       updatedTasks.add(event.task);
       _currentTasks = updatedTasks;

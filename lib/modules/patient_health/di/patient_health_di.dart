@@ -4,6 +4,7 @@ import 'package:thingsboard_app/core/network/nest_api_client.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/patient_health/data/datasources/medplum_remote_datasource.dart';
 import 'package:thingsboard_app/modules/patient_health/data/datasources/nest_auth_remote_datasource.dart';
+import 'package:thingsboard_app/modules/patient_health/data/datasources/patient_local_datasource.dart';
 import 'package:thingsboard_app/modules/patient_health/data/datasources/tb_telemetry_datasource.dart';
 import 'package:thingsboard_app/modules/patient_health/data/repositories/mock_patient_repository.dart';
 import 'package:thingsboard_app/modules/patient_health/data/repositories/nest_auth_repository.dart';
@@ -57,6 +58,20 @@ class PatientHealthDi {
     getIt.pushNewScope(
       scopeName: scopeName,
       init: (locator) {
+        // Register Local Datasource (used in both mock and production modes)
+        locator.registerLazySingleton<PatientLocalDatasource>(
+          () {
+            final datasource = PatientLocalDatasource(logger: logger);
+            // Initialize asynchronously (won't block DI registration)
+            datasource.init().catchError((e) {
+              logger.warn(
+                'PatientHealthDi: Error initializing local datasource: $e',
+              );
+            });
+            return datasource;
+          },
+        );
+
         if (useMockData) {
           _registerMockDependencies(locator, logger);
         } else {
@@ -81,10 +96,12 @@ class PatientHealthDi {
   ) {
     logger.debug('PatientHealthDi: Using MOCK data sources');
 
-    // Register Mock Patient repository
+    // Register Mock Patient repository with local datasource for task persistence
     // Using standard mock with 1 second simulated latency
     locator.registerLazySingleton<IPatientRepository>(
-      () => MockPatientRepositoryFactory.standard(),
+      () => MockPatientRepository(
+        localDatasource: locator<PatientLocalDatasource>(),
+      ),
     );
 
     // Note: Auth-related dependencies are not needed in mock mode
@@ -139,6 +156,7 @@ class PatientHealthDi {
         authDatasource: locator<INestAuthRemoteDatasource>(),
         medplumDatasource: locator<IMedplumRemoteDatasource>(),
         telemetryDatasource: locator<ITbTelemetryDatasource>(),
+        localDatasource: locator<PatientLocalDatasource>(),
         logger: logger,
       ),
     );

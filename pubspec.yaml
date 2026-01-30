@@ -141,3 +141,5 @@ flutter_gen:
     flutter_svg: true
     rive: true
     lottie: true
+
+# No dependency overrides needed - using manual Hive adapter instead of code generation

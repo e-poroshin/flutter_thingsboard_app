@@ -1,8 +1,10 @@
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
 import 'package:thingsboard_app/modules/patient_health/data/datasources/medplum_remote_datasource.dart';
 import 'package:thingsboard_app/modules/patient_health/data/datasources/nest_auth_remote_datasource.dart';
+import 'package:thingsboard_app/modules/patient_health/data/datasources/patient_local_datasource.dart';
 import 'package:thingsboard_app/modules/patient_health/data/datasources/tb_telemetry_datasource.dart';
 import 'package:thingsboard_app/modules/patient_health/data/models/models.dart';
+import 'package:thingsboard_app/modules/patient_health/data/models/task_hive_model.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_history_point.dart';
@@ -36,12 +38,14 @@ class PatientRepositoryImpl implements IPatientRepository {
     required this.authDatasource,
     required this.medplumDatasource,
     required this.telemetryDatasource,
+    required this.localDatasource,
     this.logger,
   });
 
   final INestAuthRemoteDatasource authDatasource;
   final IMedplumRemoteDatasource medplumDatasource;
   final ITbTelemetryDatasource telemetryDatasource;
+  final PatientLocalDatasource localDatasource;
   final TbLogger? logger;
 
   /// Cached user profile (contains linked IDs)
@@ -126,10 +130,128 @@ class PatientRepositoryImpl implements IPatientRepository {
 
   @override
   Future<List<TaskEntity>> getDailyTasks() async {
-    // TODO: Implement real API call to fetch daily tasks from NestJS BFF
-    // For now, return empty list - this will be implemented when backend is ready
-    logger?.warn('PatientRepositoryImpl: getDailyTasks() not yet implemented - returning empty list');
-    return [];
+    logger?.debug('PatientRepositoryImpl: Getting daily tasks from local storage');
+
+    try {
+      // Step 1: Fetch from Local Datasource
+      final localTasks = await localDatasource.getTasks();
+
+      // Step 2: Check if empty (First Run) - seed with default tasks
+      if (localTasks.isEmpty) {
+        logger?.debug(
+          'PatientRepositoryImpl: No tasks found in local storage. Seeding default tasks...',
+        );
+
+        // Generate default/mock tasks (same as MockPatientRepository)
+        final defaultTasks = _generateDefaultTasks();
+
+        // Convert to Hive models and cache them
+        final hiveModels = defaultTasks
+            .map((task) => TaskHiveModel.fromEntity(task))
+            .toList();
+        await localDatasource.cacheTasks(hiveModels);
+
+        logger?.debug(
+          'PatientRepositoryImpl: Seeded ${defaultTasks.length} default tasks',
+        );
+
+        // Return the default tasks
+        return defaultTasks;
+      }
+
+      // Step 3: If not empty, return local data mapped to Entities
+      final entities = localTasks.map((model) => model.toEntity()).toList();
+      logger?.debug(
+        'PatientRepositoryImpl: Retrieved ${entities.length} tasks from local storage',
+      );
+      return entities;
+    } catch (e, s) {
+      logger?.error(
+        'PatientRepositoryImpl: Error getting daily tasks',
+        e,
+        s,
+      );
+      // On error, return empty list rather than crashing
+      return [];
+    }
+  }
+
+  /// Generate default tasks for first-time users
+  /// These match the mock data from MockPatientRepository
+  List<TaskEntity> _generateDefaultTasks() {
+    return [
+      TaskEntity(
+        id: 'task-001',
+        title: 'Take Vitamin C',
+        time: '08:00 AM',
+        type: TaskType.medication,
+        isCompleted: false,
+        medicationDosage: 1000.0,
+        medicationUnit: 'mg',
+        description: 'Take with breakfast',
+      ),
+      TaskEntity(
+        id: 'task-002',
+        title: 'Measure Blood Pressure',
+        time: '10:00 AM',
+        type: TaskType.measurement,
+        isCompleted: false,
+        description: 'Use home BP monitor',
+      ),
+      TaskEntity(
+        id: 'task-003',
+        title: 'Evening Cardio',
+        time: '06:00 PM',
+        type: TaskType.exercise,
+        isCompleted: false,
+        description: '30 minutes of light cardio',
+      ),
+      TaskEntity(
+        id: 'task-004',
+        title: 'Take Aspirin',
+        time: '08:00 PM',
+        type: TaskType.medication,
+        isCompleted: false,
+        medicationDosage: 81.0,
+        medicationUnit: 'mg',
+        description: 'Low-dose aspirin',
+      ),
+    ];
+  }
+
+  /// Add a new task to local storage
+  /// This is called when user creates a custom reminder
+  Future<void> addTask(TaskEntity task) async {
+    logger?.debug('PatientRepositoryImpl: Adding task "${task.id}"');
+    try {
+      final hiveModel = TaskHiveModel.fromEntity(task);
+      await localDatasource.saveTask(hiveModel);
+      logger?.debug('PatientRepositoryImpl: Task "${task.id}" saved successfully');
+    } catch (e, s) {
+      logger?.error(
+        'PatientRepositoryImpl: Error adding task',
+        e,
+        s,
+      );
+      rethrow;
+    }
+  }
+
+  /// Update an existing task (e.g., toggle completion)
+  Future<void> updateTask(TaskEntity task) async {
+    logger?.debug('PatientRepositoryImpl: Updating task "${task.id}"');
+    try {
+      final hiveModel = TaskHiveModel.fromEntity(task);
+      await localDatasource.updateTask(hiveModel);
+      logger?.debug('PatientRepositoryImpl: Task "${task.id}" updated successfully');
+    } catch (e, s) {
+      logger?.error(
+        'PatientRepositoryImpl: Error updating task',
+        e,
+        s,
+      );
+      rethrow;
+    }
   }
 
   @override
