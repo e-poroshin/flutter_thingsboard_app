@@ -1,5 +1,9 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
+import 'package:thingsboard_app/core/services/notification/notification_service.dart';
+import 'package:thingsboard_app/core/services/notification/task_notification_helper.dart';
+import 'package:thingsboard_app/locator.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/bloc/patient_event.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/bloc/patient_state.dart';
@@ -19,12 +23,15 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
     on<PatientLoadVitalSignsEvent>(_onLoadVitalSigns);
     on<PatientLoadHistoryEvent>(_onLoadHistory);
     on<PatientLoadVitalHistoryEvent>(_onLoadVitalHistory);
+    on<PatientLoadTasksEvent>(_onLoadTasks);
+    on<PatientAddTaskEvent>(_onAddTask);
   }
 
   final IPatientRepository repository;
   final TbLogger logger;
 
   String? _currentPatientId;
+  List<TaskEntity> _currentTasks = [];
 
   Future<void> _onLoadHealthSummary(
     PatientLoadHealthSummaryEvent event,
@@ -155,6 +162,68 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
       logger.error('PatientBloc: Error loading vital history', e, s);
       emit(PatientErrorState(
         message: 'Failed to load vital history',
+        exception: e,
+      ));
+    }
+  }
+
+  Future<void> _onLoadTasks(
+    PatientLoadTasksEvent event,
+    Emitter<PatientState> emit,
+  ) async {
+    logger.debug('PatientBloc: Loading ${event.tasks.length} tasks');
+    _currentTasks = List.from(event.tasks);
+    emit(PatientTasksLoadedState(tasks: _currentTasks));
+  }
+
+  Future<void> _onAddTask(
+    PatientAddTaskEvent event,
+    Emitter<PatientState> emit,
+  ) async {
+    logger.debug('PatientBloc: Adding new task - ${event.task.title}');
+
+    try {
+      // Get current tasks from state if available, otherwise use _currentTasks
+      List<TaskEntity> updatedTasks;
+      if (state is PatientTasksLoadedState) {
+        updatedTasks = List.from((state as PatientTasksLoadedState).tasks);
+      } else {
+        updatedTasks = List.from(_currentTasks);
+      }
+
+      // Add the new task
+      updatedTasks.add(event.task);
+      _currentTasks = updatedTasks;
+
+      // Emit updated state
+      emit(PatientTasksLoadedState(tasks: updatedTasks));
+
+      // Schedule notification for the new task
+      try {
+        final notificationService = getIt<INotificationService>();
+        final notificationHelper = TaskNotificationHelper(
+          notificationService: notificationService,
+          logger: logger,
+        );
+        
+        // Schedule notification for just this new task
+        await notificationHelper.scheduleTaskNotifications([event.task]);
+        
+        logger.debug(
+          'PatientBloc: Successfully scheduled notification for task - ${event.task.id}',
+        );
+      } catch (e, s) {
+        // Log but don't fail the entire operation if notification scheduling fails
+        logger.warn(
+          'PatientBloc: Error scheduling notification for new task',
+          e,
+          s,
+        );
+      }
+    } catch (e, s) {
+      logger.error('PatientBloc: Error adding task', e, s);
+      emit(PatientErrorState(
+        message: 'Failed to add task',
         exception: e,
       ));
     }

@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_history_point.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart';
 
@@ -75,6 +76,18 @@ final class PatientVitalHistoryLoadedState extends PatientState {
 
   @override
   List<Object?> get props => [vitalId, range, historyPoints, currentValue];
+}
+
+/// State when tasks are loaded
+final class PatientTasksLoadedState extends PatientState {
+  const PatientTasksLoadedState({
+    required this.tasks,
+  });
+
+  final List<TaskEntity> tasks;
+
+  @override
+  List<Object?> get props => [tasks];
 }
 
 /// Error state when something goes wrong

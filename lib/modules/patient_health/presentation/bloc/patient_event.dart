@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
 
 /// PATIENT APP: Patient Health BLoC Events
 /// 
@@ -64,4 +65,24 @@ final class PatientLoadVitalHistoryEvent extends PatientEvent {
 
   @override
   List<Object?> get props => [vitalId, range];
+}
+
+/// Event to load tasks into the bloc (for syncing with repository-loaded tasks)
+final class PatientLoadTasksEvent extends PatientEvent {
+  const PatientLoadTasksEvent({required this.tasks});
+
+  final List<TaskEntity> tasks;
+
+  @override
+  List<Object?> get props => [tasks];
+}
+
+/// Event to add a new task to the treatment plan
+final class PatientAddTaskEvent extends PatientEvent {
+  const PatientAddTaskEvent({required this.task});
+
+  final TaskEntity task;
+
+  @override
+  List<Object?> get props => [task];
 }

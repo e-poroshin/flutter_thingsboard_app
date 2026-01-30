@@ -342,6 +342,7 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
               PatientVitalSignsLoadedState() => _buildVitalSignsView(state),
               PatientHistoryLoadedState() => _buildHistoryView(state),
               PatientVitalHistoryLoadedState() => _buildInitialView(), // Not used in this page
+              PatientTasksLoadedState() => _buildInitialView(), // Tasks handled in TreatmentPage
               PatientErrorState() => _buildErrorView(state),
             };
           },
