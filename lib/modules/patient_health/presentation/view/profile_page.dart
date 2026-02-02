@@ -438,36 +438,68 @@ class _ProfilePageState extends TbContextState<ProfilePage>
 
   /// Test notification functionality
   Future<void> _testNotification() async {
+    final logger = getIt<TbLogger>();
+    final now = DateTime.now();
+    final scheduledTime = now.add(const Duration(seconds: 5));
+    
+    logger.debug(
+      'ProfilePage: Test notification requested - '
+      'Now: $now, Scheduled: $scheduledTime, '
+      'Delay: 5 seconds',
+    );
+    
     try {
       final notificationService = getIt<INotificationService>();
       
-      // Schedule a test notification in 5 seconds
+      // Check if service is initialized
+      logger.debug('ProfilePage: Notification service retrieved');
+      
+      // First, test immediate notification to verify channel works
+      logger.debug('ProfilePage: Testing immediate notification first...');
+      await notificationService.showImmediateNotification(
+        998, // Different ID for immediate test
+        'Immediate Test',
+        'If you see this, notifications work! Scheduled test in 5s...',
+      );
+      
+      // Then schedule a test notification in 5 seconds
       await notificationService.scheduleTaskReminder(
         999, // Test ID
         'Test Notification',
         'This is a test alarm to verify the system works.',
-        DateTime.now().add(const Duration(seconds: 5)),
+        scheduledTime,
+      );
+
+      logger.debug(
+        'ProfilePage: ✅ Test notification scheduled successfully - '
+        'Will appear at: $scheduledTime',
       );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Test notification scheduled! Wait 5 seconds...'),
+          SnackBar(
+            content: Text(
+              'Immediate test shown! Scheduled test in 5 seconds.\n'
+              'Scheduled for: ${scheduledTime.toString().substring(11, 19)}',
+            ),
             backgroundColor: Colors.green,
-            duration: Duration(seconds: 3),
+            duration: const Duration(seconds: 6),
           ),
         );
       }
     } catch (e, s) {
-      final logger = getIt<TbLogger>();
-      logger.error('ProfilePage: Error scheduling test notification', e, s);
+      logger.error(
+        'ProfilePage: ❌ Error scheduling test notification - Error: $e',
+        e,
+        s,
+      );
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error: ${e.toString()}'),
             backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
+            duration: const Duration(seconds: 5),
           ),
         );
       }
