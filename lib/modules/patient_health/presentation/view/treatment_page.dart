@@ -128,6 +128,8 @@ class _TreatmentPageState extends TbContextState<TreatmentPage>
   Future<void> _toggleTaskCompletion(TaskEntity task) async {
     // Update task completion status
     final updatedTask = task.copyWith(isCompleted: !task.isCompleted);
+    
+    // Update local state immediately for instant UI feedback
     setState(() {
       final index = _tasks.indexWhere((t) => t.id == task.id);
       if (index != -1) {
@@ -135,8 +137,25 @@ class _TreatmentPageState extends TbContextState<TreatmentPage>
       }
     });
 
-    // TODO: In production, this would save to the backend
-    // For now, we just update the local state
+    // Persist the update to local storage
+    try {
+      final repository = getIt<IPatientRepository>();
+      await repository.updateTask(updatedTask);
+    } catch (e, s) {
+      final logger = getIt<TbLogger>();
+      logger.warn(
+        'TreatmentPage: Error updating task completion status',
+        e,
+        s,
+      );
+      // Revert the UI change if save failed
+      setState(() {
+        final index = _tasks.indexWhere((t) => t.id == task.id);
+        if (index != -1) {
+          _tasks[index] = task; // Revert to original
+        }
+      });
+    }
   }
 
   @override
@@ -157,37 +176,41 @@ class _TreatmentPageState extends TbContextState<TreatmentPage>
         repository: getIt<IPatientRepository>(),
         logger: getIt<TbLogger>(),
       ),
-      child: BlocListener<PatientBloc, PatientState>(
+        child: BlocListener<PatientBloc, PatientState>(
         listener: (context, state) {
           if (state is PatientTasksLoadedState) {
+            // Update with complete task list from bloc
+            // The bloc now reloads all tasks from repository after adding, so this is the complete list
             setState(() {
               _tasks = state.tasks;
             });
           }
         },
-        child: Scaffold(
-          appBar: TbAppBar(
-            tbContext,
-            title: const Text(
-              'Treatment Plan',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
+        child: Builder(
+          builder: (blocContext) => Scaffold(
+            appBar: TbAppBar(
+              tbContext,
+              title: const Text(
+                'Treatment Plan',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: _loadDailyTasks,
+                  tooltip: 'Refresh tasks',
+                ),
+              ],
             ),
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                onPressed: _loadDailyTasks,
-                tooltip: 'Refresh tasks',
-              ),
-            ],
-          ),
-          body: _buildBody(),
-          floatingActionButton: FloatingActionButton(
-            onPressed: () => _showAddTaskBottomSheet(context),
-            backgroundColor: Theme.of(context).primaryColor,
-            child: const Icon(Icons.add, color: Colors.white),
+            body: _buildBody(),
+            floatingActionButton: FloatingActionButton(
+              onPressed: () => _showAddTaskBottomSheet(blocContext),
+              backgroundColor: Theme.of(blocContext).primaryColor,
+              child: const Icon(Icons.add, color: Colors.white),
+            ),
           ),
         ),
       ),
@@ -195,22 +218,30 @@ class _TreatmentPageState extends TbContextState<TreatmentPage>
   }
 
   void _showAddTaskBottomSheet(BuildContext context) {
+    // Read the bloc from the parent context (before showing the sheet)
+    final bloc = context.read<PatientBloc>();
+    
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) => AddTaskBottomSheet(
-        onTaskAdded: (task) {
-          // Dispatch event to bloc
-          context.read<PatientBloc>().add(PatientAddTaskEvent(task: task));
-          // Also add to local state immediately for instant UI update
-          setState(() {
-            _tasks = [..._tasks, task];
-          });
-          Navigator.pop(context);
-        },
+      builder: (bottomSheetContext) => BlocProvider<PatientBloc>.value(
+        value: bloc,
+        child: AddTaskBottomSheet(
+          onTaskAdded: (task) {
+            // Add to local state immediately for instant UI update
+            setState(() {
+              _tasks = [..._tasks, task];
+            });
+            
+            // Dispatch event to bloc (which will save to repository and schedule notification)
+            bloc.add(PatientAddTaskEvent(task: task));
+            
+            Navigator.pop(bottomSheetContext);
+          },
+        ),
       ),
     );
   }
@@ -475,23 +506,42 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
   }
 
   void _saveTask() {
-    if (_formKey.currentState!.validate()) {
-      // Generate a random ID for the new task
-      final random = Random();
-      final taskId = 'user_task_${random.nextInt(1000000)}';
-
-      // Create the task entity
-      final task = TaskEntity(
-        id: taskId,
-        title: _taskNameController.text.trim(),
-        time: _formatTime(_selectedTime),
-        type: _selectedType,
-        isCompleted: false,
-      );
-
-      // Call the callback
-      widget.onTaskAdded(task);
+    print('🐛 DEBUG: Save pressed');
+    
+    // Form Validation Check - ensure form state exists
+    final formState = _formKey.currentState;
+    if (formState == null) {
+      print('🐛 DEBUG: Form state is null!');
+      return;
     }
+    
+    // Validate form - this will show error messages if validation fails
+    if (!formState.validate()) {
+      print('🐛 DEBUG: Form validation failed');
+      return;
+    }
+    
+    print('🐛 DEBUG: Form valid, creating task');
+    
+    // Generate a unique ID using timestamp
+    final taskId = 'user_task_${DateTime.now().millisecondsSinceEpoch}';
+
+    // Create the task entity
+    final task = TaskEntity(
+      id: taskId,
+      title: _taskNameController.text.trim(),
+      time: _formatTime(_selectedTime),
+      type: _selectedType,
+      isCompleted: false,
+    );
+
+    print('🐛 DEBUG: Task created with ID: $taskId, title: ${task.title}');
+    print('🐛 DEBUG: Dispatching event to bloc');
+    
+    // Call the callback (which will dispatch to bloc and close the sheet)
+    widget.onTaskAdded(task);
+    
+    print('🐛 DEBUG: Callback executed, sheet should close');
   }
 
   @override
@@ -529,6 +579,7 @@ class _AddTaskBottomSheetState extends State<AddTaskBottomSheet> {
                   hintText: 'e.g., Take Vitamin D',
                   border: OutlineInputBorder(),
                 ),
+                autovalidateMode: AutovalidateMode.onUserInteraction,
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
                     return 'Please enter a task name';

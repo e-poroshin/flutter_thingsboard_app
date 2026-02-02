@@ -25,6 +25,9 @@ abstract interface class IPatientRepository {
   /// Add a new task to the treatment plan (for user-created reminders)
   Future<void> addTask(TaskEntity task);
 
+  /// Update an existing task (e.g., toggle completion status)
+  Future<void> updateTask(TaskEntity task);
+
   /// Get historical data points for a specific vital sign
   /// [vitalId] - Identifier for the vital (e.g., "heartRate", "temperature")
   /// [range] - Time range: "1D" (1 day), "1W" (1 week), "1M" (1 month)

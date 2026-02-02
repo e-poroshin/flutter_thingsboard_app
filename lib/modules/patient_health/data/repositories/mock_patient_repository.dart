@@ -330,6 +330,23 @@ class MockPatientRepository implements repo.IPatientRepository {
     // Note: If no local datasource, task is not persisted (mock mode without storage)
   }
 
+  @override
+  Future<void> updateTask(TaskEntity task) async {
+    await _simulateNetworkDelay();
+    
+    // If local datasource is available, persist the update
+    if (localDatasource != null) {
+      try {
+        final hiveModel = TaskHiveModel.fromEntity(task);
+        await localDatasource!.updateTask(hiveModel);
+      } catch (e) {
+        // If persistence fails, just log and continue
+        // Task won't be persisted but won't crash the app
+      }
+    }
+    // Note: If no local datasource, task update is not persisted (mock mode without storage)
+  }
+
   // ============================================================
   // Existing API Implementation (using mock data)
   // ============================================================

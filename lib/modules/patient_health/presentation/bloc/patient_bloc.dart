@@ -183,14 +183,6 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
     logger.debug('PatientBloc: Adding new task - ${event.task.title}');
 
     try {
-      // Get current tasks from state if available, otherwise use _currentTasks
-      List<TaskEntity> updatedTasks;
-      if (state is PatientTasksLoadedState) {
-        updatedTasks = List.from((state as PatientTasksLoadedState).tasks);
-      } else {
-        updatedTasks = List.from(_currentTasks);
-      }
-
       // Save task to repository (persists to local storage)
       try {
         await repository.addTask(event.task);
@@ -204,12 +196,13 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
         // Continue even if save fails - task is still added to state
       }
 
-      // Add the new task
-      updatedTasks.add(event.task);
-      _currentTasks = updatedTasks;
+      // Reload all tasks from repository to get the complete list
+      // This ensures we have all tasks including the newly added one
+      final allTasks = await repository.getDailyTasks();
+      _currentTasks = allTasks;
 
-      // Emit updated state
-      emit(PatientTasksLoadedState(tasks: updatedTasks));
+      // Emit updated state with complete task list
+      emit(PatientTasksLoadedState(tasks: allTasks));
 
       // Schedule notification for the new task
       try {
