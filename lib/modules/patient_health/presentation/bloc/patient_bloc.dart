@@ -1,10 +1,15 @@
+import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
+import 'package:thingsboard_app/core/services/ble/ble_data_parser.dart';
+import 'package:thingsboard_app/core/services/ble/ble_sensor_service.dart';
 import 'package:thingsboard_app/core/services/notification/notification_service.dart';
 import 'package:thingsboard_app/core/services/notification/task_notification_helper.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
-import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart'
+    show IPatientRepository, PatientHealthSummary, VitalSign, VitalSignType;
 import 'package:thingsboard_app/modules/patient_health/presentation/bloc/patient_event.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/bloc/patient_state.dart';
 
@@ -32,6 +37,8 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
 
   String? _currentPatientId;
   List<TaskEntity> _currentTasks = [];
+  StreamSubscription<List<ScanResult>>? _bleSubscription;
+  IBleSensorService? _bleService;
 
   Future<void> _onLoadHealthSummary(
     PatientLoadHealthSummaryEvent event,
@@ -43,6 +50,14 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
     try {
       _currentPatientId = event.patientId;
       final summary = await repository.getPatientHealthSummary(event.patientId);
+      
+      // Check if a sensor is paired and start listening to BLE data
+      final sensorId = await repository.getSensorId();
+      if (sensorId != null) {
+        logger.debug('PatientBloc: Sensor paired ($sensorId), starting BLE listener');
+        await _startBleListener(sensorId, emit);
+      }
+      
       emit(PatientHealthLoadedState(healthSummary: summary));
     } catch (e, s) {
       logger.error('PatientBloc: Error loading health summary', e, s);
@@ -51,6 +66,158 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
         exception: e,
       ));
     }
+  }
+
+  /// Start listening to BLE sensor data
+  Future<void> _startBleListener(
+    String sensorId,
+    Emitter<PatientState> emit,
+  ) async {
+    try {
+      // Get BLE service
+      _bleService = getIt<IBleSensorService>();
+      
+      // Initialize if needed
+      try {
+        await _bleService!.init();
+      } catch (e) {
+        logger.warn('PatientBloc: BLE service init failed, continuing without BLE: $e');
+        return;
+      }
+
+      // Start scanning and listening
+      _bleSubscription?.cancel();
+      _bleSubscription = _bleService!.scanForSensors().listen(
+        (results) {
+          // Find our paired sensor
+          for (final result in results) {
+            if (result.device.remoteId.toString() == sensorId) {
+              // Parse temperature and humidity
+              final temperature = BleDataParser.parseTemperature(result);
+              final humidity = BleDataParser.parseHumidity(result);
+
+              if (temperature != null || humidity != null) {
+                logger.debug(
+                  'PatientBloc: Received BLE data - Temp: $temperature°C, Humidity: $humidity%',
+                );
+                
+                // Update current state with real BLE data
+                _updateStateWithBleData(emit, temperature, humidity);
+              }
+              break;
+            }
+          }
+        },
+        onError: (error) {
+          logger.warn('PatientBloc: BLE scan error: $error');
+        },
+      );
+    } catch (e, s) {
+      logger.error('PatientBloc: Error starting BLE listener', e, s);
+    }
+  }
+
+  /// Update current state with BLE sensor data
+  void _updateStateWithBleData(
+    Emitter<PatientState> emit,
+    double? temperature,
+    double? humidity,
+  ) {
+    final currentState = state;
+    
+    if (currentState is PatientHealthLoadedState) {
+      // Update vitals in the health summary
+      final updatedVitals = _updateVitalValue(
+        currentState.healthSummary.vitalSigns,
+        temperature,
+        humidity,
+      );
+
+      final updatedSummary = PatientHealthSummary(
+        patientId: currentState.healthSummary.patientId,
+        patientName: currentState.healthSummary.patientName,
+        lastUpdated: DateTime.now(),
+        vitalSigns: updatedVitals,
+        recentObservations: currentState.healthSummary.recentObservations,
+      );
+
+      emit(PatientHealthLoadedState(healthSummary: updatedSummary));
+    }
+  }
+
+  /// Update vital values with BLE data
+  List<VitalSign> _updateVitalValue(
+    List<VitalSign> currentVitals,
+    double? temperature,
+    double? humidity,
+  ) {
+    final updatedVitals = <VitalSign>[];
+    bool temperatureUpdated = false;
+    bool humidityUpdated = false;
+
+    // Update existing vitals or add new ones
+    for (final vital in currentVitals) {
+      if (vital.type == VitalSignType.temperature && temperature != null) {
+        // Check if temperature is normal (36.1-37.2°C)
+        final isNormal = temperature >= 36.1 && temperature <= 37.2;
+        updatedVitals.add(VitalSign(
+          type: vital.type,
+          value: temperature,
+          unit: vital.unit,
+          timestamp: DateTime.now(),
+          deviceId: vital.deviceId,
+          isNormal: isNormal,
+        ));
+        temperatureUpdated = true;
+      } else if (vital.type == VitalSignType.oxygenSaturation && humidity != null) {
+        // Map humidity to oxygen saturation for now (or create separate humidity vital)
+        // Check if humidity/oxygen saturation is normal (95-100%)
+        final isNormal = humidity >= 95 && humidity <= 100;
+        updatedVitals.add(VitalSign(
+          type: vital.type,
+          value: humidity,
+          unit: vital.unit,
+          timestamp: DateTime.now(),
+          deviceId: vital.deviceId,
+          isNormal: isNormal,
+        ));
+        humidityUpdated = true;
+      } else {
+        updatedVitals.add(vital);
+      }
+    }
+
+    // Add temperature if it doesn't exist
+    if (temperature != null && !temperatureUpdated) {
+      final isNormal = temperature >= 36.1 && temperature <= 37.2;
+      updatedVitals.add(VitalSign(
+        type: VitalSignType.temperature,
+        value: temperature,
+        unit: '°C',
+        timestamp: DateTime.now(),
+        isNormal: isNormal,
+      ));
+    }
+
+    // Add humidity as oxygen saturation if it doesn't exist
+    if (humidity != null && !humidityUpdated) {
+      final isNormal = humidity >= 95 && humidity <= 100;
+      updatedVitals.add(VitalSign(
+        type: VitalSignType.oxygenSaturation,
+        value: humidity,
+        unit: '%',
+        timestamp: DateTime.now(),
+        isNormal: isNormal,
+      ));
+    }
+
+    return updatedVitals;
+  }
+
+  @override
+  Future<void> close() {
+    _bleSubscription?.cancel();
+    return super.close();
   }
 
   Future<void> _onRefresh(

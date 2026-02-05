@@ -141,6 +141,50 @@ class PatientLocalDatasource {
     }
   }
 
+  /// Save paired sensor ID
+  /// Stores the BLE device remote ID for later retrieval
+  Future<void> savePairedSensorId(String remoteId) async {
+    try {
+      _ensureInitialized();
+      // Use a settings box or store in the existing box with a special key
+      // For simplicity, we'll use a separate settings box
+      if (!Hive.isBoxOpen('settings_box')) {
+        await Hive.openBox('settings_box');
+      }
+      final settingsBox = Hive.box('settings_box');
+      await settingsBox.put('paired_sensor_id', remoteId);
+      logger.debug('PatientLocalDatasource: Saved paired sensor ID: $remoteId');
+    } catch (e, s) {
+      logger.error(
+        'PatientLocalDatasource: Error saving paired sensor ID',
+        e,
+        s,
+      );
+      rethrow;
+    }
+  }
+
+  /// Get paired sensor ID
+  /// Returns the stored BLE device remote ID, or null if not set
+  String? getPairedSensorId() {
+    try {
+      if (!Hive.isBoxOpen('settings_box')) {
+        return null;
+      }
+      final settingsBox = Hive.box('settings_box');
+      final sensorId = settingsBox.get('paired_sensor_id') as String?;
+      logger.debug('PatientLocalDatasource: Retrieved paired sensor ID: $sensorId');
+      return sensorId;
+    } catch (e, s) {
+      logger.error(
+        'PatientLocalDatasource: Error getting paired sensor ID',
+        e,
+        s,
+      );
+      return null;
+    }
+  }
+
   /// Ensure the box is initialized
   void _ensureInitialized() {
     if (_box == null || !_box!.isOpen) {

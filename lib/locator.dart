@@ -27,6 +27,7 @@ import 'package:thingsboard_app/utils/services/user/i_user_service.dart';
 import 'package:thingsboard_app/utils/services/user/user_service.dart';
 import 'package:thingsboard_app/modules/patient_health/di/patient_health_di.dart';
 import 'package:thingsboard_app/core/services/notification/notification_service.dart';
+import 'package:thingsboard_app/core/services/ble/ble_sensor_service.dart';
 
 final getIt = GetIt.instance;
 
@@ -91,6 +92,10 @@ Future<void> setUpRootDependencies() async {
     // PATIENT APP: Notification Service
     ..registerLazySingleton<INotificationService>(
       () => LocalNotificationService(logger: getIt()),
+    )
+    // PATIENT APP: BLE Sensor Service
+    ..registerLazySingleton<IBleSensorService>(
+      () => BleSensorService(logger: getIt()),
     )
     // PATIENT APP: NestJS BFF API Client
     ..registerLazySingleton<FlutterSecureStorage>(

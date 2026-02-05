@@ -83,6 +83,8 @@ dependencies:
   local_auth: ^2.3.0
   # PATIENT APP: Data Visualization
   fl_chart: ^0.68.0
+  # PATIENT APP: BLE Sensor Scanning
+  flutter_blue_plus: ^1.35.0
 
 dev_dependencies:
   flutter_test:

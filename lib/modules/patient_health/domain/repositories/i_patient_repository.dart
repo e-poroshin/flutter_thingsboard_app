@@ -33,6 +33,14 @@ abstract interface class IPatientRepository {
   /// [range] - Time range: "1D" (1 day), "1W" (1 week), "1M" (1 month)
   Future<List<VitalHistoryPoint>> getVitalHistory(String vitalId, String range);
 
+  /// Save paired BLE sensor device ID
+  /// [remoteId] - The BLE device remote ID to save
+  Future<void> saveSensor(String remoteId);
+
+  /// Get paired BLE sensor device ID
+  /// Returns the saved sensor ID, or null if no sensor is paired
+  Future<String?> getSensorId();
+
   // ============================================================
   // Existing API (for Production with BFF)
   // ============================================================

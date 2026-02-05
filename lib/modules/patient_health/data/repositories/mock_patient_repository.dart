@@ -347,6 +347,38 @@ class MockPatientRepository implements repo.IPatientRepository {
     // Note: If no local datasource, task update is not persisted (mock mode without storage)
   }
 
+  @override
+  Future<void> saveSensor(String remoteId) async {
+    await _simulateNetworkDelay();
+    
+    // If local datasource is available, persist the sensor ID
+    if (localDatasource != null) {
+      try {
+        await localDatasource!.savePairedSensorId(remoteId);
+      } catch (e) {
+        // If persistence fails, just log and continue
+        // Sensor won't be persisted but won't crash the app
+      }
+    }
+    // Note: If no local datasource, sensor is not persisted (mock mode without storage)
+  }
+
+  @override
+  Future<String?> getSensorId() async {
+    await _simulateNetworkDelay();
+    
+    // If local datasource is available, get the sensor ID
+    if (localDatasource != null) {
+      try {
+        return localDatasource!.getPairedSensorId();
+      } catch (e) {
+        // If retrieval fails, return null
+        return null;
+      }
+    }
+    return null;
+  }
+
   // ============================================================
   // Existing API Implementation (using mock data)
   // ============================================================

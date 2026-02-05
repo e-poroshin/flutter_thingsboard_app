@@ -7,6 +7,7 @@ import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart';
 import 'package:thingsboard_app/modules/patient_health/di/patient_health_di.dart';
+import 'package:thingsboard_app/modules/patient_health/presentation/view/sensor_scan_page.dart';
 import 'package:thingsboard_app/widgets/tb_app_bar.dart';
 
 /// PATIENT APP: Profile Page
@@ -161,6 +162,11 @@ class _ProfilePageState extends TbContextState<ProfilePage>
           _buildUserHeader(),
           const SizedBox(height: 16),
 
+          // Devices Section
+          _buildDevicesSection(),
+
+          const SizedBox(height: 16),
+
           // Settings Section
           _buildSettingsSection(),
 
@@ -261,6 +267,41 @@ class _ProfilePageState extends TbContextState<ProfilePage>
     if (parts.isEmpty) return 'P';
     if (parts.length == 1) return parts[0][0].toUpperCase();
     return '${parts[0][0]}${parts[parts.length - 1][0]}'.toUpperCase();
+  }
+
+  Widget _buildDevicesSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Text(
+            'Devices',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[700],
+            ),
+          ),
+        ),
+        Card(
+          margin: const EdgeInsets.symmetric(horizontal: 16),
+          child: ListTile(
+            leading: const Icon(Icons.bluetooth_searching, color: Colors.blue),
+            title: const Text('Connect Health Sensor'),
+            subtitle: const Text('Pair Xiaomi LYWSD03MMC or other BLE devices'),
+            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => SensorScanPage(widget.tbContext),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildSettingsSection() {

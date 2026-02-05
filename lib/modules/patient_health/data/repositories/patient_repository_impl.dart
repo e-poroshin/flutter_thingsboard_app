@@ -255,6 +255,39 @@ class PatientRepositoryImpl implements IPatientRepository {
   }
 
   @override
+  Future<void> saveSensor(String remoteId) async {
+    logger?.debug('PatientRepositoryImpl: Saving sensor ID: $remoteId');
+    try {
+      await localDatasource.savePairedSensorId(remoteId);
+      logger?.debug('PatientRepositoryImpl: Sensor "$remoteId" saved successfully');
+    } catch (e, s) {
+      logger?.error(
+        'PatientRepositoryImpl: Error saving sensor',
+        e,
+        s,
+      );
+      rethrow;
+    }
+  }
+
+  @override
+  Future<String?> getSensorId() async {
+    logger?.debug('PatientRepositoryImpl: Getting paired sensor ID');
+    try {
+      final sensorId = localDatasource.getPairedSensorId();
+      logger?.debug('PatientRepositoryImpl: Retrieved sensor ID: $sensorId');
+      return sensorId;
+    } catch (e, s) {
+      logger?.error(
+        'PatientRepositoryImpl: Error getting sensor ID',
+        e,
+        s,
+      );
+      return null;
+    }
+  }
+
+  @override
   Future<List<VitalHistoryPoint>> getVitalHistory(
     String vitalId,
     String range,
