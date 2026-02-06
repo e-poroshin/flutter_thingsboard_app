@@ -86,3 +86,23 @@ final class PatientAddTaskEvent extends PatientEvent {
   @override
   List<Object?> get props => [task];
 }
+
+/// Event to update vitals with BLE sensor data
+final class PatientBleUpdateEvent extends PatientEvent {
+  const PatientBleUpdateEvent({
+    required this.temperature,
+    required this.humidity,
+  });
+
+  final double temperature;
+  final double humidity;
+
+  @override
+  List<Object?> get props => [temperature, humidity];
+}
+
+/// Event to connect to a paired BLE sensor
+/// Dispatched after saving a sensor ID to immediately start listening
+final class PatientConnectSensorEvent extends PatientEvent {
+  const PatientConnectSensorEvent();
+}

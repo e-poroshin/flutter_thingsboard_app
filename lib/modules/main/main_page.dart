@@ -122,6 +122,7 @@ class _MainPageState extends TbPageState<MainPage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    // Patient Health module DI is now managed at app level, no cleanup needed here
     super.dispose();
   }
 }

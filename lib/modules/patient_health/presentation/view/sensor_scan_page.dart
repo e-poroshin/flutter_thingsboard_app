@@ -6,7 +6,8 @@ import 'package:thingsboard_app/core/services/ble/ble_data_parser.dart';
 import 'package:thingsboard_app/core/services/ble/ble_sensor_service.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart';
-import 'package:thingsboard_app/modules/patient_health/di/patient_health_di.dart';
+import 'package:thingsboard_app/modules/patient_health/presentation/bloc/patient_bloc.dart';
+import 'package:thingsboard_app/modules/patient_health/presentation/bloc/patient_event.dart';
 import 'package:thingsboard_app/widgets/tb_app_bar.dart';
 
 /// PATIENT APP: Sensor Scan Page
@@ -22,38 +23,39 @@ class SensorScanPage extends TbContextWidget {
 
 class _SensorScanPageState extends TbContextState<SensorScanPage> {
   final IBleSensorService _bleService = getIt<IBleSensorService>();
-  final _diScopeKey = UniqueKey();
   StreamSubscription<List<ScanResult>>? _scanSubscription;
   List<ScanResult> _scanResults = [];
   bool _isScanning = false;
   bool _isInitialized = false;
   String? _errorMessage;
 
+  // Flag to track if we successfully paired a sensor
+  // If true, we won't stop the BLE service on dispose, allowing the Bloc to keep scanning
+  bool _isSensorPaired = false;
+
   @override
   void initState() {
     super.initState();
-    // Initialize Patient Health module DI if not already initialized
-    if (!getIt.hasScope(_diScopeKey.toString())) {
-      PatientHealthDi.init(
-        _diScopeKey.toString(),
-        tbClient: widget.tbContext.tbClient,
-        logger: getIt(),
-      );
-    }
+    // Rely on global DI scope initialized in ThingsboardApp
     _initializeAndStartScan();
   }
 
   @override
   void dispose() {
-    // Stop scan without setState (widget is being disposed)
+    // Stop local UI updates
     _scanSubscription?.cancel();
     _scanSubscription = null;
-    _bleService.stopScan();
-    
-    // Dispose Patient Health module DI if we created the scope
-    if (getIt.hasScope(_diScopeKey.toString())) {
-      PatientHealthDi.dispose(_diScopeKey.toString());
+
+    // CRITICAL FIX: Only stop the physical BLE scan if we didn't pair a sensor.
+    // If we paired, the PatientBloc takes over scanning, so we must keep the radio on.
+    if (!_isSensorPaired) {
+      try {
+        _bleService.stopScan();
+      } catch (e) {
+        // Ignore errors during disposal
+      }
     }
+
     super.dispose();
   }
 
@@ -84,11 +86,10 @@ class _SensorScanPageState extends TbContextState<SensorScanPage> {
 
       // Start scanning
       _scanSubscription = _bleService.scanForSensors().listen(
-        (results) {
+            (results) {
           if (mounted) {
             setState(() {
               _scanResults = results;
-              // Keep scanning state true as long as we're receiving results
               _isScanning = true;
             });
           }
@@ -102,14 +103,13 @@ class _SensorScanPageState extends TbContextState<SensorScanPage> {
           }
         },
         onDone: () {
-          // Stream completed (scan timeout reached)
           if (mounted) {
             setState(() {
               _isScanning = false;
             });
           }
         },
-        cancelOnError: false, // Continue listening even if there's an error
+        cancelOnError: false,
       );
     } catch (e) {
       setState(() {
@@ -124,7 +124,6 @@ class _SensorScanPageState extends TbContextState<SensorScanPage> {
     _scanSubscription?.cancel();
     _scanSubscription = null;
     _bleService.stopScan();
-    // Only update state if widget is still mounted
     if (mounted) {
       setState(() {
         _isScanning = false;
@@ -141,12 +140,24 @@ class _SensorScanPageState extends TbContextState<SensorScanPage> {
   Future<void> _addToDashboard(ScanResult result) async {
     try {
       final remoteId = result.device.remoteId.toString();
-      
+
       // Save sensor ID to repository
       final repository = getIt<IPatientRepository>();
       await repository.saveSensor(remoteId);
-      
-      // Show success message before navigating
+
+      // Mark as paired so dispose() doesn't kill the scan
+      _isSensorPaired = true;
+
+      // Dispatch event to global bloc to load data and start its own listener
+      try {
+        final bloc = getIt<PatientBloc>();
+        final userId = widget.tbContext.tbClient.getAuthUser()?.userId
+            ?? 'mock-patient-001';
+        bloc.add(PatientLoadHealthSummaryEvent(patientId: userId));
+      } catch (e) {
+        // Ignore if bloc not ready
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -155,19 +166,20 @@ class _SensorScanPageState extends TbContextState<SensorScanPage> {
             duration: Duration(seconds: 2),
           ),
         );
-        
-        // Stop scanning before navigating to prevent setState after dispose
-        _stopScan();
-        
-        // Small delay to ensure SnackBar is shown, then navigate back
+
+        // Stop local UI updates only (don't stop the actual service!)
+        _scanSubscription?.cancel();
+        _scanSubscription = null;
+
+        // Small delay for UX
         await Future.delayed(const Duration(milliseconds: 100));
-        
+
         if (mounted) {
           Navigator.pop(context);
         }
       }
     } catch (e) {
-      // Show error message if save fails
+      _isSensorPaired = false; // Reset flag on error
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -193,9 +205,7 @@ class _SensorScanPageState extends TbContextState<SensorScanPage> {
 
   Widget _buildBody() {
     if (!_isInitialized) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_errorMessage != null) {
@@ -205,11 +215,7 @@ class _SensorScanPageState extends TbContextState<SensorScanPage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                Icons.error_outline,
-                size: 64,
-                color: Colors.red[300],
-              ),
+              Icon(Icons.error_outline, size: 64, color: Colors.red[300]),
               const SizedBox(height: 16),
               Text(
                 _errorMessage!,
@@ -261,8 +267,8 @@ class _SensorScanPageState extends TbContextState<SensorScanPage> {
               Text(
                 _isScanning ? 'Scanning...' : 'Scan Stopped',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               const SizedBox(height: 4),
               Text(
@@ -309,8 +315,8 @@ class _SensorScanPageState extends TbContextState<SensorScanPage> {
                 : 'No devices found',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                ),
+              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+            ),
           ),
         ],
       ),
@@ -337,11 +343,8 @@ class _SensorScanPageState extends TbContextState<SensorScanPage> {
     final deviceId = result.device.remoteId.toString();
     final rssi = result.rssi;
 
-    // Parse temperature and humidity from ATC firmware
     final temperature = BleDataParser.parseTemperature(result);
     final humidity = BleDataParser.parseHumidity(result);
-
-    // Check if it's an ATC sensor (Service UUID 0x181A)
     final isAtcSensor = BleDataParser.isXiaomiTemperatureMonitor(result);
 
     return Card(
@@ -352,7 +355,7 @@ class _SensorScanPageState extends TbContextState<SensorScanPage> {
               ? Theme.of(context).colorScheme.primaryContainer
               : Theme.of(context).colorScheme.surfaceVariant,
           child: Icon(
-            Icons.thermostat, // Generic thermometer icon
+            Icons.thermostat,
             color: isAtcSensor
                 ? Theme.of(context).colorScheme.onPrimaryContainer
                 : Theme.of(context).colorScheme.onSurfaceVariant,
@@ -375,57 +378,43 @@ class _SensorScanPageState extends TbContextState<SensorScanPage> {
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 8),
-            // Show live temperature prominently
             if (temperature != null) ...[
               Row(
                 children: [
-                  Icon(
-                    Icons.thermostat,
-                    size: 20,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
+                  Icon(Icons.thermostat, size: 20, color: Theme.of(context).colorScheme.primary),
                   const SizedBox(width: 8),
                   Text(
                     '${temperature.toStringAsFixed(1)}°C',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
                   ),
                   if (humidity != null) ...[
                     const SizedBox(width: 16),
-                    Icon(
-                      Icons.water_drop,
-                      size: 18,
-                      color: Theme.of(context).colorScheme.secondary,
-                    ),
+                    Icon(Icons.water_drop, size: 18, color: Theme.of(context).colorScheme.secondary),
                     const SizedBox(width: 4),
                     Text(
                       '${humidity.toStringAsFixed(1)}%',
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: Theme.of(context).colorScheme.secondary,
-                          ),
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context).colorScheme.secondary,
+                      ),
                     ),
                   ],
                 ],
               ),
             ] else ...[
-              // Show "Waiting for data..." when temperature is not available
               Row(
                 children: [
-                  Icon(
-                    Icons.hourglass_empty,
-                    size: 16,
-                    color: Colors.grey[600],
-                  ),
+                  Icon(Icons.hourglass_empty, size: 16, color: Colors.grey[600]),
                   const SizedBox(width: 4),
                   Text(
                     'Waiting for data...',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Colors.grey[600],
-                          fontStyle: FontStyle.italic,
-                        ),
+                      color: Colors.grey[600],
+                      fontStyle: FontStyle.italic,
+                    ),
                   ),
                 ],
               ),

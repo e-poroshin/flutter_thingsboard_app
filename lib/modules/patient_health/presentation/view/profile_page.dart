@@ -6,7 +6,6 @@ import 'package:thingsboard_app/core/services/notification/notification_service.
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart';
-import 'package:thingsboard_app/modules/patient_health/di/patient_health_di.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/view/sensor_scan_page.dart';
 import 'package:thingsboard_app/widgets/tb_app_bar.dart';
 
@@ -24,7 +23,6 @@ class ProfilePage extends TbContextWidget {
 
 class _ProfilePageState extends TbContextState<ProfilePage>
     with AutomaticKeepAliveClientMixin<ProfilePage> {
-  final _diScopeKey = UniqueKey();
   PatientEntity? _patientProfile;
   bool _isLoading = true;
   bool _faceIdEnabled = false;
@@ -44,14 +42,7 @@ class _ProfilePageState extends TbContextState<ProfilePage>
       logger: getIt(),
     );
 
-    // Initialize Patient Health module DI if not already initialized
-    if (!getIt.hasScope(_diScopeKey.toString())) {
-      PatientHealthDi.init(
-        _diScopeKey.toString(),
-        tbClient: widget.tbContext.tbClient,
-        logger: getIt(),
-      );
-    }
+    // No local DI scope — uses the global scope from ThingsboardApp.initState
 
     // Load patient profile and biometric preference when page initializes
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -122,10 +113,7 @@ class _ProfilePageState extends TbContextState<ProfilePage>
 
   @override
   void dispose() {
-    // Only dispose if we created the scope
-    if (getIt.hasScope(_diScopeKey.toString())) {
-      PatientHealthDi.dispose(_diScopeKey.toString());
-    }
+    // No local DI scope to dispose — global scope is managed by ThingsboardApp
     super.dispose();
   }
 

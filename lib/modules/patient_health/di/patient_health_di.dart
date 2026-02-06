@@ -50,9 +50,12 @@ class PatientHealthDi {
   /// - Datasources (Mock or NestJS BFF endpoints)
   /// - Repositories
   /// - BLoCs for state management
+  ///
+  /// Note: [tbClient] is optional — mock mode doesn't need it,
+  /// and production mode uses NestApiClient from the global scope.
   static void init(
     String scopeName, {
-    required ThingsboardClient tbClient,
+    ThingsboardClient? tbClient,
     required TbLogger logger,
   }) {
     getIt.pushNewScope(

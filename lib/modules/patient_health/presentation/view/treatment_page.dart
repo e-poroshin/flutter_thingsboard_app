@@ -10,7 +10,6 @@ import 'package:thingsboard_app/core/services/notification/task_notification_hel
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart';
-import 'package:thingsboard_app/modules/patient_health/di/patient_health_di.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/bloc/patient_bloc.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/bloc/patient_event.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/bloc/patient_state.dart';
@@ -30,7 +29,6 @@ class TreatmentPage extends TbContextWidget {
 
 class _TreatmentPageState extends TbContextState<TreatmentPage>
     with AutomaticKeepAliveClientMixin<TreatmentPage> {
-  final _diScopeKey = UniqueKey();
   List<TaskEntity> _tasks = [];
   bool _isLoading = true;
   String? _errorMessage;
@@ -42,14 +40,7 @@ class _TreatmentPageState extends TbContextState<TreatmentPage>
   void initState() {
     super.initState();
 
-    // Initialize Patient Health module DI if not already initialized
-    if (!getIt.hasScope(_diScopeKey.toString())) {
-      PatientHealthDi.init(
-        _diScopeKey.toString(),
-        tbClient: widget.tbContext.tbClient,
-        logger: getIt(),
-      );
-    }
+    // No local DI scope — uses the global scope from ThingsboardApp.initState
 
     // Request notification permissions when page loads
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -160,10 +151,7 @@ class _TreatmentPageState extends TbContextState<TreatmentPage>
 
   @override
   void dispose() {
-    // Only dispose if we created the scope
-    if (getIt.hasScope(_diScopeKey.toString())) {
-      PatientHealthDi.dispose(_diScopeKey.toString());
-    }
+    // No local DI scope to dispose — global scope is managed by ThingsboardApp
     super.dispose();
   }
 
@@ -171,12 +159,9 @@ class _TreatmentPageState extends TbContextState<TreatmentPage>
   Widget build(BuildContext context) {
     super.build(context);
 
-    return BlocProvider<PatientBloc>(
-      create: (_) => PatientBloc(
-        repository: getIt<IPatientRepository>(),
-        logger: getIt<TbLogger>(),
-      ),
-        child: BlocListener<PatientBloc, PatientState>(
+    return BlocProvider<PatientBloc>.value(
+      value: getIt<PatientBloc>(),
+      child: BlocListener<PatientBloc, PatientState>(
         listener: (context, state) {
           if (state is PatientTasksLoadedState) {
             // Update with complete task list from bloc

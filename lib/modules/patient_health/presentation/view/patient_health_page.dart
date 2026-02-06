@@ -29,7 +29,6 @@ class PatientHealthPage extends TbContextWidget {
 
 class _PatientHealthPageState extends TbContextState<PatientHealthPage>
     with AutomaticKeepAliveClientMixin<PatientHealthPage>, WidgetsBindingObserver {
-  final _diScopeKey = UniqueKey();
   bool _isTestingConnection = false;
   bool _hasInitialized = false;
   bool _isPageVisible = true; // Track if this page is actually visible
@@ -41,17 +40,9 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    
-    // Initialize Patient Health module DI
-    PatientHealthDi.init(
-      _diScopeKey.toString(),
-      tbClient: widget.tbContext.tbClient,
-      logger: getIt(),
-    );
 
-    // Load patient health data when page initializes
-    // Use the current user's ID as the patient ID
-    // Dispatch the event after the frame is built to ensure BlocProvider is ready
+    // PatientBloc is now provided by MainPage, so we don't need to initialize DI here
+    // Just mark as initialized after the frame is built
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _hasInitialized = true;
       _isPageVisible = true;
@@ -62,7 +53,7 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    PatientHealthDi.dispose(_diScopeKey.toString());
+    // PatientBloc is managed by MainPage, so we don't dispose DI here
     super.dispose();
   }
 
@@ -86,16 +77,14 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
   }
 
   /// Load health data only if needed (prevents infinite loading on back navigation)
-  /// Checks current BLoC state and only dispatches if:
-  /// - State is PatientInitialState (no data loaded yet)
-  /// - State is PatientErrorState (previous load failed, allow retry)
-  /// - State is PatientVitalHistoryLoadedState (user came back from detail page)
-  /// - State is PatientLoadingState but we're not actually loading (stuck state)
-  /// Does NOT dispatch if state is already PatientHealthLoadedState (prevents flickering)
+  /// Reloads health summary whenever the current state is NOT PatientHealthLoadedState
+  /// This ensures the page always shows health data, even if the bloc is in another state
+  /// (e.g., PatientTasksLoadedState from Plan tab, PatientVitalSignsLoadedState, etc.)
   void _loadHealthDataIfNeeded() {
     if (!mounted) return;
     
-    final bloc = getIt<PatientBloc>();
+    // Get bloc from context (provided by MainPage)
+    final bloc = context.read<PatientBloc>();
     final currentState = bloc.state;
     
     // If we already have health summary data loaded, don't reload
@@ -107,45 +96,42 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
       return;
     }
 
-    // Always reload if we're in one of these states:
-    // - Initial state (first load)
-    // - Error state (retry after failure)
-    // - Vital history state (user came back from detail page - need to show summary again)
-    // - Loading state (might be stuck, but we'll let it complete or timeout)
-    final shouldLoad = currentState is PatientInitialState ||
-        currentState is PatientErrorState ||
-        currentState is PatientVitalHistoryLoadedState;
-
-    if (!shouldLoad) {
-      // If we're in loading state, wait a bit to see if it completes
-      // Otherwise, log and return
-      if (currentState is PatientLoadingState) {
-        widget.tbContext.log.debug(
-          'PatientHealthPage: Currently loading, waiting for completion...',
-        );
-        return;
-      }
-      
+    // If currently loading, wait for it to complete
+    if (currentState is PatientLoadingState) {
       widget.tbContext.log.debug(
-        'PatientHealthPage: Current state is ${currentState.runtimeType}, '
-        'not loading health data',
+        'PatientHealthPage: Currently loading, waiting for completion...',
       );
       return;
     }
 
+    // Reload if state is NOT PatientHealthLoadedState and NOT PatientLoadingState
+    // This covers all other states: Initial, Error, Tasks, Vitals, History, VitalHistory, etc.
+    // When on Health Page, we MUST have Health Summary data, so reload if we don't have it
+    final shouldLoad = currentState is! PatientHealthLoadedState && 
+        currentState is! PatientLoadingState;
+
+    if (!shouldLoad) {
+      widget.tbContext.log.debug(
+        'PatientHealthPage: Unexpected state condition, skipping reload',
+      );
+      return;
+    }
+
+    widget.tbContext.log.debug(
+      'PatientHealthPage: Reloading health summary (current state: ${currentState.runtimeType})',
+    );
+
     final userId = widget.tbContext.tbClient.getAuthUser()?.userId;
     if (userId != null) {
       widget.tbContext.log.debug(
-        'PatientHealthPage: Loading health summary for user $userId '
-        '(state: ${currentState.runtimeType})',
+        'PatientHealthPage: Loading health summary for user $userId',
       );
       bloc.add(PatientLoadHealthSummaryEvent(patientId: userId));
     } else {
       // Fallback: use a default patient ID for mock mode
       // In mock mode, the repository will return mock data regardless of ID
       widget.tbContext.log.debug(
-        'PatientHealthPage: Loading health summary for mock patient '
-        '(state: ${currentState.runtimeType})',
+        'PatientHealthPage: Loading health summary for mock patient',
       );
       bloc.add(
         const PatientLoadHealthSummaryEvent(patientId: 'mock-patient-001'),
@@ -271,9 +257,11 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
 
   @override
   Widget build(BuildContext context) {
+    // Required for AutomaticKeepAliveClientMixin
     super.build(context);
 
-    final bloc = getIt<PatientBloc>();
+    // Get bloc from context (provided by MainPage)
+    final bloc = context.read<PatientBloc>();
 
     // Update visibility status
     _isPageVisible = ModalRoute.of(context)?.isCurrent ?? true;
@@ -294,27 +282,25 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
       });
     }
 
-    return BlocProvider<PatientBloc>.value(
-      value: bloc,
-      child: BlocListener<PatientBloc, PatientState>(
-        listener: (context, state) {
-          // When user navigates back from VitalDetailPage, the state will be
-          // PatientVitalHistoryLoadedState. We need to reload the health summary.
-          // BUT only if this page is actually visible (not when detail page is showing)
-          // This prevents PatientHealthPage from interfering when VitalDetailPage is loading data
-          if (state is PatientVitalHistoryLoadedState && 
-              _hasInitialized && 
-              mounted) {
-            // Check visibility before reloading
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              final isCurrentlyVisible = ModalRoute.of(context)?.isCurrent ?? false;
-              if (mounted && isCurrentlyVisible) {
-                _loadHealthDataIfNeeded();
-              }
-            });
-          }
-        },
-        child: Scaffold(
+    return BlocListener<PatientBloc, PatientState>(
+      listener: (context, state) {
+        // When user navigates back from VitalDetailPage, the state will be
+        // PatientVitalHistoryLoadedState. We need to reload the health summary.
+        // BUT only if this page is actually visible (not when detail page is showing)
+        // This prevents PatientHealthPage from interfering when VitalDetailPage is loading data
+        if (state is PatientVitalHistoryLoadedState && 
+            _hasInitialized && 
+            mounted) {
+          // Check visibility before reloading
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            final isCurrentlyVisible = ModalRoute.of(context)?.isCurrent ?? false;
+            if (mounted && isCurrentlyVisible) {
+              _loadHealthDataIfNeeded();
+            }
+          });
+        }
+      },
+      child: Scaffold(
         appBar: TbAppBar(
           tbContext,
           title: const Text(
@@ -328,27 +314,45 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
             IconButton(
               icon: const Icon(Icons.refresh),
               onPressed: () {
-                getIt<PatientBloc>().add(const PatientRefreshEvent());
+                context.read<PatientBloc>().add(const PatientRefreshEvent());
               },
             ),
           ],
         ),
         body: BlocBuilder<PatientBloc, PatientState>(
           builder: (context, state) {
+            // Safety check: If this page is VISIBLE and the Bloc state is not
+            // health-related (e.g. Tasks from Plan tab), force a reload.
+            // CRITICAL: Only fire when this page is the current route!
+            // Without the visibility check, this would hijack the state when
+            // VitalDetailPage is showing a chart (overwriting its state).
+            if (state is! PatientHealthLoadedState &&
+                state is! PatientLoadingState &&
+                state is! PatientErrorState) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  final isVisible = ModalRoute.of(context)?.isCurrent ?? false;
+                  if (isVisible) {
+                    _loadHealthDataIfNeeded();
+                  }
+                }
+              });
+            }
+
             return switch (state) {
               PatientInitialState() => _buildInitialView(),
               PatientLoadingState() => _buildLoadingView(),
               PatientHealthLoadedState() => _buildHealthSummaryView(state),
-              PatientVitalSignsLoadedState() => _buildVitalSignsView(state),
-              PatientHistoryLoadedState() => _buildHistoryView(state),
-              PatientVitalHistoryLoadedState() => _buildInitialView(), // Not used in this page
-              PatientTasksLoadedState() => _buildInitialView(), // Tasks handled in TreatmentPage
+              PatientVitalSignsLoadedState() => _buildInitialView(),
+              PatientHistoryLoadedState() => _buildInitialView(),
+              PatientVitalHistoryLoadedState() => _buildInitialView(),
+              PatientTasksLoadedState() => _buildInitialView(),
               PatientErrorState() => _buildErrorView(state),
             };
           },
         ),
       ),
-    ));
+    );
   }
 
   Widget _buildInitialView() {
@@ -466,7 +470,7 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
 
     return RefreshIndicator(
       onRefresh: () async {
-        getIt<PatientBloc>().add(const PatientRefreshEvent());
+        context.read<PatientBloc>().add(const PatientRefreshEvent());
       },
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -528,7 +532,21 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
                       },
                       child: ListTile(
                         leading: _getVitalSignIcon(vital.type),
-                        title: Text(_getVitalSignName(vital.type)),
+                        title: Row(
+                          children: [
+                            Text(_getVitalSignName(vital.type)),
+                            // Show BLE icon for temperature from live sensor
+                            if (vital.type == VitalSignType.temperature && vital.deviceId != null)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 8.0),
+                                child: Icon(
+                                  Icons.bluetooth,
+                                  size: 16,
+                                  color: Colors.blue,
+                                ),
+                              ),
+                          ],
+                        ),
                         subtitle: Text(_formatVitalValue(vital.value, vital.unit)),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -657,7 +675,7 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
           const SizedBox(height: 16),
           ElevatedButton(
             onPressed: () {
-              getIt<PatientBloc>().add(const PatientRefreshEvent());
+              context.read<PatientBloc>().add(const PatientRefreshEvent());
             },
             child: const Text('Retry'),
           ),

@@ -30,6 +30,8 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
     on<PatientLoadVitalHistoryEvent>(_onLoadVitalHistory);
     on<PatientLoadTasksEvent>(_onLoadTasks);
     on<PatientAddTaskEvent>(_onAddTask);
+    on<PatientBleUpdateEvent>(_onBleUpdate);
+    on<PatientConnectSensorEvent>(_onConnectSensor);
   }
 
   final IPatientRepository repository;
@@ -40,25 +42,57 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
   StreamSubscription<List<ScanResult>>? _bleSubscription;
   IBleSensorService? _bleService;
 
+  /// Cached health summary that persists across state changes.
+  /// BLE updates always apply to this cache so sensor data is never lost
+  /// when the user navigates to detail pages (which change the bloc state).
+  PatientHealthSummary? _cachedHealthSummary;
+
   Future<void> _onLoadHealthSummary(
     PatientLoadHealthSummaryEvent event,
     Emitter<PatientState> emit,
   ) async {
     logger.debug('PatientBloc: Loading health summary for ${event.patientId}');
-    emit(const PatientLoadingState());
 
     try {
       _currentPatientId = event.patientId;
+
+      // If we have a cached health summary with BLE data, use it immediately
+      // This preserves live sensor readings across page navigations
+      if (_cachedHealthSummary != null) {
+        logger.debug('PatientBloc: Restoring cached health summary (preserves BLE data)');
+        emit(PatientHealthLoadedState(healthSummary: _cachedHealthSummary!));
+        
+        // Ensure BLE listener is running
+        final sensorId = await repository.getSensorId();
+        if (sensorId != null && _bleSubscription == null) {
+          logger.debug('PatientBloc: Restarting BLE listener for sensor $sensorId');
+          _startBleListener(sensorId).catchError((e, StackTrace s) {
+            logger.warn('PatientBloc: Error starting BLE listener: $e', e, s);
+          });
+        }
+        return;
+      }
+
+      // No cache — first load. Show loading indicator and fetch from repository.
+      emit(const PatientLoadingState());
+      
+      // Step 1: Fetch initial data (Hive/Mock)
       final summary = await repository.getPatientHealthSummary(event.patientId);
       
-      // Check if a sensor is paired and start listening to BLE data
+      // Step 2: Cache and emit loaded state FIRST (critical: before starting BLE)
+      _cachedHealthSummary = summary;
+      emit(PatientHealthLoadedState(healthSummary: summary));
+      
+      // Step 3: Check for paired sensor and start BLE listener (non-blocking)
       final sensorId = await repository.getSensorId();
       if (sensorId != null) {
         logger.debug('PatientBloc: Sensor paired ($sensorId), starting BLE listener');
-        await _startBleListener(sensorId, emit);
+        // Start BLE listener asynchronously without blocking or awaiting
+        _startBleListener(sensorId).catchError((e, StackTrace s) {
+          logger.warn('PatientBloc: Error starting BLE listener: $e', e, s);
+          // Don't emit error state - BLE is optional, UI should still work
+        });
       }
-      
-      emit(PatientHealthLoadedState(healthSummary: summary));
     } catch (e, s) {
       logger.error('PatientBloc: Error loading health summary', e, s);
       emit(PatientErrorState(
@@ -69,26 +103,38 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
   }
 
   /// Start listening to BLE sensor data
-  Future<void> _startBleListener(
-    String sensorId,
-    Emitter<PatientState> emit,
-  ) async {
+  /// This is called asynchronously and should not block the main flow
+  /// Uses events to update state instead of directly emitting
+  Future<void> _startBleListener(String sensorId) async {
     try {
       // Get BLE service
       _bleService = getIt<IBleSensorService>();
       
-      // Initialize if needed
+      // Initialize if needed (with timeout to prevent hanging)
       try {
-        await _bleService!.init();
+        await _bleService!.init().timeout(
+          const Duration(seconds: 5),
+          onTimeout: () {
+            throw TimeoutException('BLE initialization timed out');
+          },
+        );
       } catch (e) {
         logger.warn('PatientBloc: BLE service init failed, continuing without BLE: $e');
         return;
       }
 
-      // Start scanning and listening
+      // Cancel existing subscription if any
       _bleSubscription?.cancel();
+      
+      // Start scanning and listening (non-blocking)
       _bleSubscription = _bleService!.scanForSensors().listen(
         (results) {
+          // Safety guard: Don't add events if bloc is closed
+          if (isClosed) {
+            logger.debug('PatientBloc: Ignoring BLE data - bloc is closed');
+            return;
+          }
+
           // Find our paired sensor
           for (final result in results) {
             if (result.device.remoteId.toString() == sensorId) {
@@ -96,13 +142,19 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
               final temperature = BleDataParser.parseTemperature(result);
               final humidity = BleDataParser.parseHumidity(result);
 
-              if (temperature != null || humidity != null) {
+              if (temperature != null) {
                 logger.debug(
-                  'PatientBloc: Received BLE data - Temp: $temperature°C, Humidity: $humidity%',
+                  'PatientBloc: Received BLE data - Temp: $temperature°C, Humidity: ${humidity ?? 0}%',
                 );
                 
-                // Update current state with real BLE data
-                _updateStateWithBleData(emit, temperature, humidity);
+                // Safety guard: Check again before adding event
+                if (!isClosed) {
+                  // Dispatch event to update state (non-blocking, event-driven)
+                  add(PatientBleUpdateEvent(
+                    temperature: temperature,
+                    humidity: humidity ?? 0.0,
+                  ));
+                }
               }
               break;
             }
@@ -114,35 +166,84 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
       );
     } catch (e, s) {
       logger.error('PatientBloc: Error starting BLE listener', e, s);
+      // Don't rethrow - BLE is optional, UI should still work
     }
   }
 
-  /// Update current state with BLE sensor data
-  void _updateStateWithBleData(
+  /// Handle BLE update event
+  /// ALWAYS updates the cached health summary so sensor data is never lost.
+  /// Only emits a new state when the Home page is active (PatientHealthLoadedState).
+  /// When another page is active (e.g. chart detail), the cache is silently updated
+  /// and will be restored when the user navigates back to Home.
+  void _onBleUpdate(
+    PatientBleUpdateEvent event,
     Emitter<PatientState> emit,
-    double? temperature,
-    double? humidity,
   ) {
+    // Determine which summary to update: current state or cache
     final currentState = state;
-    
+    final summaryToUpdate = (currentState is PatientHealthLoadedState)
+        ? currentState.healthSummary
+        : _cachedHealthSummary;
+
+    if (summaryToUpdate == null) {
+      logger.debug('PatientBloc: Ignoring BLE update - no health summary available yet');
+      return;
+    }
+
+    logger.debug(
+      'PatientBloc: Updating vitals with BLE data - Temp: ${event.temperature}°C, Humidity: ${event.humidity}%',
+    );
+
+    // Update vitals in the health summary
+    final updatedVitals = _updateVitalValue(
+      summaryToUpdate.vitalSigns,
+      event.temperature,
+      event.humidity,
+    );
+
+    final updatedSummary = PatientHealthSummary(
+      patientId: summaryToUpdate.patientId,
+      patientName: summaryToUpdate.patientName,
+      lastUpdated: DateTime.now(),
+      vitalSigns: updatedVitals,
+      recentObservations: summaryToUpdate.recentObservations,
+    );
+
+    // ALWAYS update the cache so BLE data is preserved across page navigations
+    _cachedHealthSummary = updatedSummary;
+
+    // Only emit to UI if the Home page is active (PatientHealthLoadedState)
+    // When a detail page is active, the cache is updated silently
     if (currentState is PatientHealthLoadedState) {
-      // Update vitals in the health summary
-      final updatedVitals = _updateVitalValue(
-        currentState.healthSummary.vitalSigns,
-        temperature,
-        humidity,
-      );
-
-      final updatedSummary = PatientHealthSummary(
-        patientId: currentState.healthSummary.patientId,
-        patientName: currentState.healthSummary.patientName,
-        lastUpdated: DateTime.now(),
-        vitalSigns: updatedVitals,
-        recentObservations: currentState.healthSummary.recentObservations,
-      );
-
       emit(PatientHealthLoadedState(healthSummary: updatedSummary));
     }
+  }
+
+  /// Handle connect sensor event
+  /// Immediately starts listening to BLE data for the newly paired sensor
+  Future<void> _onConnectSensor(
+    PatientConnectSensorEvent event,
+    Emitter<PatientState> emit,
+  ) async {
+    logger.debug('PatientBloc: Connect sensor event received');
+    
+    // Read the sensor ID from repository
+    final sensorId = await repository.getSensorId();
+    if (sensorId == null) {
+      logger.debug('PatientBloc: No sensor ID found, skipping connection');
+      return;
+    }
+
+    logger.debug('PatientBloc: Connecting to sensor: $sensorId');
+    
+    // Cancel existing subscription before starting a new one
+    await _bleSubscription?.cancel();
+    _bleSubscription = null;
+    
+    // Start BLE listener (non-blocking)
+    _startBleListener(sensorId).catchError((e, StackTrace s) {
+      logger.warn('PatientBloc: Error connecting to sensor: $e', e, s);
+    });
   }
 
   /// Update vital values with BLE data
@@ -165,7 +266,7 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
           value: temperature,
           unit: vital.unit,
           timestamp: DateTime.now(),
-          deviceId: vital.deviceId,
+          deviceId: 'ble-sensor', // Mark as live BLE data for icon display
           isNormal: isNormal,
         ));
         temperatureUpdated = true;
@@ -178,7 +279,7 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
           value: humidity,
           unit: vital.unit,
           timestamp: DateTime.now(),
-          deviceId: vital.deviceId,
+          deviceId: 'ble-sensor', // Mark as live BLE data
           isNormal: isNormal,
         ));
         humidityUpdated = true;
@@ -195,6 +296,7 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
         value: temperature,
         unit: '°C',
         timestamp: DateTime.now(),
+        deviceId: 'ble-sensor', // Mark as BLE sensor for icon display
         isNormal: isNormal,
       ));
     }
@@ -215,8 +317,18 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
   }
 
   @override
-  Future<void> close() {
-    _bleSubscription?.cancel();
+  Future<void> close() async {
+    // Cancel BLE subscription before closing the bloc
+    await _bleSubscription?.cancel();
+    _bleSubscription = null;
+    
+    // Stop BLE scan if service is available
+    try {
+      _bleService?.stopScan();
+    } catch (e) {
+      // Ignore errors when stopping scan during disposal
+    }
+    
     return super.close();
   }
 
@@ -229,14 +341,30 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
       return;
     }
 
-    logger.debug('PatientBloc: Refreshing health data');
+    logger.debug('PatientBloc: Refreshing health data (clearing cache)');
+    
+    // Clear the cache so fresh data is fetched from repository
+    _cachedHealthSummary = null;
     emit(const PatientLoadingState());
 
     try {
+      // Fetch fresh data
       final summary = await repository.getPatientHealthSummary(
         _currentPatientId!,
       );
+      
+      // Cache and emit loaded state
+      _cachedHealthSummary = summary;
       emit(PatientHealthLoadedState(healthSummary: summary));
+      
+      // Restart BLE listener if sensor is paired
+      final sensorId = await repository.getSensorId();
+      if (sensorId != null) {
+        logger.debug('PatientBloc: Restarting BLE listener for sensor $sensorId');
+        _startBleListener(sensorId).catchError((e, StackTrace s) {
+          logger.warn('PatientBloc: Error restarting BLE listener: $e', e, s);
+        });
+      }
     } catch (e, s) {
       logger.error('PatientBloc: Error refreshing health data', e, s);
       emit(PatientErrorState(

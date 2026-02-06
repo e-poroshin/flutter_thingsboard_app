@@ -13,8 +13,9 @@ abstract interface class IBleSensorService {
   /// Must be called before scanning
   Future<void> init();
 
-  /// Start scanning for BLE sensors
-  /// Returns a stream of scan results
+  /// Start scanning for BLE sensors.
+  /// Returns a broadcast stream of scan results that keeps emitting
+  /// until [stopScan] is called. No timeout — runs indefinitely.
   Stream<List<ScanResult>> scanForSensors();
 
   /// Stop scanning for BLE sensors
@@ -31,6 +32,11 @@ abstract interface class IBleSensorService {
 ///
 /// Handles BLE scanning for passive sensor reading.
 /// Uses flutter_blue_plus for cross-platform BLE support.
+///
+/// [scanForSensors] starts a scan with **no timeout** and returns the
+/// FBP scanResults broadcast stream directly. The scan runs continuously
+/// until [stopScan] is called.  Multiple callers can listen to the same
+/// stream (it is a broadcast stream from FBP).
 class BleSensorService implements IBleSensorService {
   BleSensorService({
     required this.logger,
@@ -38,7 +44,7 @@ class BleSensorService implements IBleSensorService {
 
   final TbLogger logger;
   bool _isInitialized = false;
-  StreamSubscription<List<ScanResult>>? _scanSubscription;
+  bool _isScanning = false;
 
   @override
   Future<void> init() async {
@@ -109,39 +115,43 @@ class BleSensorService implements IBleSensorService {
       );
     }
 
-    logger.info('BleSensorService: Starting BLE scan for ATC sensors (Service UUID 0x181A)');
+    // If already scanning, just return the existing FBP stream
+    if (_isScanning) {
+      logger.debug('BleSensorService: Already scanning, returning existing stream');
+      return FlutterBluePlus.scanResults;
+    }
 
-    // Start scanning - try with service filter first, but if no results, we can scan without filter
-    // ATC firmware uses Service UUID 0x181A (Environmental Sensing)
-    // Note: Some ATC firmware variants might advertise differently, so we scan broadly
-    // The parser will filter for ATC format devices
+    logger.info('BleSensorService: Starting continuous BLE scan (no timeout)');
+
     try {
+      // Start scan WITHOUT timeout — runs until stopScan() is called.
+      // This is the key fix: no timeout means no periodic restart,
+      // no result-list reset, and continuous data flow.
       FlutterBluePlus.startScan(
-        timeout: const Duration(seconds: 30), // Increased timeout for better discovery
         androidUsesFineLocation: true,
-        // Try filtering by service UUID - if this doesn't work, remove the filter
-        // withServices: [Guid("181a")], // Temporarily disabled to see all devices
       );
+      _isScanning = true;
       logger.debug('BleSensorService: Scan started successfully');
     } catch (e) {
       logger.error('BleSensorService: Error starting scan: $e');
       rethrow;
     }
 
-    // Return the scan results stream
-    // This stream emits a List<ScanResult> containing all discovered devices
-    return FlutterBluePlus.scanResults.map((results) {
-      logger.debug('BleSensorService: Received ${results.length} scan result(s)');
-      return results;
-    });
+    // FBP's scanResults is a broadcast stream that accumulates all
+    // discovered devices and keeps emitting as new advertisements arrive.
+    return FlutterBluePlus.scanResults;
   }
 
   @override
   void stopScan() {
     logger.info('BleSensorService: Stopping BLE scan');
-    FlutterBluePlus.stopScan();
-    _scanSubscription?.cancel();
-    _scanSubscription = null;
+    _isScanning = false;
+
+    try {
+      FlutterBluePlus.stopScan();
+    } catch (_) {
+      // Ignore errors when stopping scan
+    }
   }
 
   @override
