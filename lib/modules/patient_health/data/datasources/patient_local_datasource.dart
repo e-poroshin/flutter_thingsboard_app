@@ -14,12 +14,14 @@ class PatientLocalDatasource {
 
   final TbLogger logger;
   static const String _boxName = 'tasks_box';
+  static const String _settingsBoxName = 'settings_box';
   Box<TaskHiveModel>? _box;
 
-  /// Initialize Hive box for tasks
+  /// Initialize Hive boxes for tasks and settings
   /// Must be called before any other operations
   Future<void> init() async {
     try {
+      // Open tasks box
       if (!Hive.isBoxOpen(_boxName)) {
         _box = await Hive.openBox<TaskHiveModel>(_boxName);
         logger.debug(
@@ -29,6 +31,15 @@ class PatientLocalDatasource {
         _box = Hive.box<TaskHiveModel>(_boxName);
         logger.debug(
           'PatientLocalDatasource: Using existing Hive box "$_boxName"',
+        );
+      }
+
+      // Open settings box (stores paired sensor ID, etc.)
+      // Must be opened eagerly so getPairedSensorId() works on cold startup
+      if (!Hive.isBoxOpen(_settingsBoxName)) {
+        await Hive.openBox(_settingsBoxName);
+        logger.debug(
+          'PatientLocalDatasource: Opened Hive box "$_settingsBoxName"',
         );
       }
     } catch (e, s) {
@@ -145,13 +156,11 @@ class PatientLocalDatasource {
   /// Stores the BLE device remote ID for later retrieval
   Future<void> savePairedSensorId(String remoteId) async {
     try {
-      _ensureInitialized();
-      // Use a settings box or store in the existing box with a special key
-      // For simplicity, we'll use a separate settings box
-      if (!Hive.isBoxOpen('settings_box')) {
-        await Hive.openBox('settings_box');
+      // Ensure settings box is open (may not be if init() hasn't completed)
+      if (!Hive.isBoxOpen(_settingsBoxName)) {
+        await Hive.openBox(_settingsBoxName);
       }
-      final settingsBox = Hive.box('settings_box');
+      final settingsBox = Hive.box(_settingsBoxName);
       await settingsBox.put('paired_sensor_id', remoteId);
       logger.debug('PatientLocalDatasource: Saved paired sensor ID: $remoteId');
     } catch (e, s) {
@@ -165,13 +174,14 @@ class PatientLocalDatasource {
   }
 
   /// Get paired sensor ID
-  /// Returns the stored BLE device remote ID, or null if not set
-  String? getPairedSensorId() {
+  /// Returns the stored BLE device remote ID, or null if not set.
+  /// Opens settings_box if not already open (handles cold startup race condition).
+  Future<String?> getPairedSensorId() async {
     try {
-      if (!Hive.isBoxOpen('settings_box')) {
-        return null;
+      if (!Hive.isBoxOpen(_settingsBoxName)) {
+        await Hive.openBox(_settingsBoxName);
       }
-      final settingsBox = Hive.box('settings_box');
+      final settingsBox = Hive.box(_settingsBoxName);
       final sensorId = settingsBox.get('paired_sensor_id') as String?;
       logger.debug('PatientLocalDatasource: Retrieved paired sensor ID: $sensorId');
       return sensorId;

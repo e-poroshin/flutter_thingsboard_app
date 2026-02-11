@@ -274,7 +274,7 @@ class PatientRepositoryImpl implements IPatientRepository {
   Future<String?> getSensorId() async {
     logger?.debug('PatientRepositoryImpl: Getting paired sensor ID');
     try {
-      final sensorId = localDatasource.getPairedSensorId();
+      final sensorId = await localDatasource.getPairedSensorId();
       logger?.debug('PatientRepositoryImpl: Retrieved sensor ID: $sensorId');
       return sensorId;
     } catch (e, s) {

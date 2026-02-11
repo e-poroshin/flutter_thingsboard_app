@@ -370,7 +370,7 @@ class MockPatientRepository implements repo.IPatientRepository {
     // If local datasource is available, get the sensor ID
     if (localDatasource != null) {
       try {
-        return localDatasource!.getPairedSensorId();
+        return await localDatasource!.getPairedSensorId();
       } catch (e) {
         // If retrieval fails, return null
         return null;
