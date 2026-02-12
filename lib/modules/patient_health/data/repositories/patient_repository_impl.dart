@@ -5,6 +5,7 @@ import 'package:thingsboard_app/modules/patient_health/data/datasources/patient_
 import 'package:thingsboard_app/modules/patient_health/data/datasources/tb_telemetry_datasource.dart';
 import 'package:thingsboard_app/modules/patient_health/data/models/models.dart';
 import 'package:thingsboard_app/modules/patient_health/data/models/task_hive_model.dart';
+import 'package:thingsboard_app/modules/patient_health/data/models/vital_history_hive_model.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_history_point.dart';
@@ -292,12 +293,73 @@ class PatientRepositoryImpl implements IPatientRepository {
     String vitalId,
     String range,
   ) async {
-    // TODO: Implement real API call to fetch vital history from NestJS BFF
-    // For now, return empty list - this will be implemented when backend is ready
-    logger?.warn(
-      'PatientRepositoryImpl: getVitalHistory() not yet implemented - returning empty list',
+    // Step 1: Try local history from Hive (collected from BLE sensor)
+    try {
+      final since = _getSinceFromRange(range);
+      final localHistory = await localDatasource.getVitalHistory(
+        vitalId,
+        since: since,
+      );
+
+      if (localHistory.isNotEmpty) {
+        logger?.debug(
+          'PatientRepositoryImpl: Returning ${localHistory.length} local '
+          'history points for $vitalId',
+        );
+        return localHistory
+            .map((m) => VitalHistoryPoint(
+                  timestamp: m.timestamp,
+                  value: m.value,
+                ))
+            .toList();
+      }
+    } catch (e) {
+      logger?.warn(
+        'PatientRepositoryImpl: Error reading local history: $e',
+      );
+    }
+
+    // Step 2: TODO — fetch from NestJS BFF when backend is ready
+    logger?.debug(
+      'PatientRepositoryImpl: No local history for $vitalId, returning empty',
     );
     return [];
+  }
+
+  /// Convert range string to a DateTime cutoff
+  DateTime _getSinceFromRange(String range) {
+    final now = DateTime.now();
+    switch (range) {
+      case '1D':
+        return now.subtract(const Duration(hours: 24));
+      case '1W':
+        return now.subtract(const Duration(days: 7));
+      case '1M':
+        return now.subtract(const Duration(days: 30));
+      default:
+        return now.subtract(const Duration(hours: 24));
+    }
+  }
+
+  @override
+  Future<void> saveVitalMeasurement({
+    required String vitalType,
+    required double value,
+    String? unit,
+  }) async {
+    try {
+      await localDatasource.saveVitalMeasurement(
+        VitalHistoryHiveModel.fromMeasurement(
+          vitalType: vitalType,
+          value: value,
+          unit: unit,
+        ),
+      );
+    } catch (e) {
+      logger?.warn(
+        'PatientRepositoryImpl: Error saving vital measurement: $e',
+      );
+    }
   }
 
   // ============================================================

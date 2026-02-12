@@ -13,6 +13,7 @@ import 'package:thingsboard_app/core/auth/login/select_region/model/region.dart'
 import 'package:thingsboard_app/firebase_options.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/patient_health/data/models/task_hive_model_adapter.dart';
+import 'package:thingsboard_app/modules/patient_health/data/models/vital_history_hive_model_adapter.dart';
 import 'package:thingsboard_app/thingsboard_app.dart';
 import 'package:thingsboard_app/utils/services/firebase/i_firebase_service.dart';
 import 'package:thingsboard_app/utils/services/local_database/i_local_database_service.dart';
@@ -24,8 +25,9 @@ void main() async {
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
   await Hive.initFlutter();
   Hive.registerAdapter(RegionAdapter());
-  // PATIENT APP: Register TaskHiveModel adapter (manual implementation)
+  // PATIENT APP: Register Hive adapters (manual implementations)
   Hive.registerAdapter(TaskHiveModelAdapter());
+  Hive.registerAdapter(VitalHistoryHiveModelAdapter());
   await setUpRootDependencies();
   if (UniversalPlatform.isAndroid) {
     await InAppWebViewController.setWebContentsDebuggingEnabled(

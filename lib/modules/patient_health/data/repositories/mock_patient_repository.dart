@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:thingsboard_app/modules/patient_health/data/datasources/patient_local_datasource.dart';
 import 'package:thingsboard_app/modules/patient_health/data/models/task_hive_model.dart';
+import 'package:thingsboard_app/modules/patient_health/data/models/vital_history_hive_model.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_history_point.dart';
@@ -141,61 +142,102 @@ class MockPatientRepository implements repo.IPatientRepository {
     String vitalId,
     String range,
   ) async {
-    await _simulateNetworkDelay();
+    // Step 1: Try to get real data from local storage first
+    if (localDatasource != null) {
+      try {
+        final since = _getSinceFromRange(range);
+        final localHistory = await localDatasource!.getVitalHistory(
+          vitalId,
+          since: since,
+        );
 
+        if (localHistory.isNotEmpty) {
+          // Real data exists — return it mapped to domain entities
+          return localHistory.map((m) => m.toEntity()).toList();
+        }
+      } catch (e) {
+        // Fall through to mock data on error
+      }
+    }
+
+    // Step 2: No local data — generate mock data for UI development
+    await _simulateNetworkDelay();
+    return _generateMockHistory(vitalId, range);
+  }
+
+  /// Convert range string to a DateTime cutoff
+  DateTime _getSinceFromRange(String range) {
+    final now = DateTime.now();
+    switch (range) {
+      case '1D':
+        return now.subtract(const Duration(hours: 24));
+      case '1W':
+        return now.subtract(const Duration(days: 7));
+      case '1M':
+        return now.subtract(const Duration(days: 30));
+      default:
+        return now.subtract(const Duration(hours: 24));
+    }
+  }
+
+  /// Generate mock history data for UI development
+  List<VitalHistoryPoint> _generateMockHistory(String vitalId, String range) {
     final now = DateTime.now();
     final List<VitalHistoryPoint> points = [];
 
-    // Determine base value and range based on vital type
     final vitalType = _getVitalTypeFromId(vitalId);
     final (baseValue, minValue, maxValue) = _getVitalRange(vitalType);
 
     if (range == '1D') {
-      // Generate 24 points (one per hour for last 24 hours)
       for (int i = 23; i >= 0; i--) {
         final timestamp = now.subtract(Duration(hours: i));
-        // Add some realistic variation with slight trend
         final variation = _randomDoubleInRange(-5, 5);
-        final trend = (23 - i) * 0.2; // Slight upward trend
+        final trend = (23 - i) * 0.2;
         final value = (baseValue + variation + trend)
             .clamp(minValue, maxValue)
             .toDouble();
-        points.add(VitalHistoryPoint(
-          timestamp: timestamp,
-          value: value,
-        ));
+        points.add(VitalHistoryPoint(timestamp: timestamp, value: value));
       }
     } else if (range == '1W') {
-      // Generate 7 points (one per day for last 7 days)
       for (int i = 6; i >= 0; i--) {
         final timestamp = now.subtract(Duration(days: i));
         final variation = _randomDoubleInRange(-8, 8);
-        final trend = (6 - i) * 0.3; // Slight upward trend
+        final trend = (6 - i) * 0.3;
         final value = (baseValue + variation + trend)
             .clamp(minValue, maxValue)
             .toDouble();
-        points.add(VitalHistoryPoint(
-          timestamp: timestamp,
-          value: value,
-        ));
+        points.add(VitalHistoryPoint(timestamp: timestamp, value: value));
       }
     } else if (range == '1M') {
-      // Generate ~30 points (one per day for last 30 days)
       for (int i = 29; i >= 0; i--) {
         final timestamp = now.subtract(Duration(days: i));
         final variation = _randomDoubleInRange(-10, 10);
-        final trend = (29 - i) * 0.1; // Very slight upward trend
+        final trend = (29 - i) * 0.1;
         final value = (baseValue + variation + trend)
             .clamp(minValue, maxValue)
             .toDouble();
-        points.add(VitalHistoryPoint(
-          timestamp: timestamp,
-          value: value,
-        ));
+        points.add(VitalHistoryPoint(timestamp: timestamp, value: value));
       }
     }
 
     return points;
+  }
+
+  @override
+  Future<void> saveVitalMeasurement({
+    required String vitalType,
+    required double value,
+    String? unit,
+  }) async {
+    if (localDatasource != null) {
+      await localDatasource!.saveVitalMeasurement(
+        VitalHistoryHiveModel.fromMeasurement(
+          vitalType: vitalType,
+          value: value,
+          unit: unit,
+        ),
+      );
+    }
   }
 
   /// Helper to get vital type from ID string

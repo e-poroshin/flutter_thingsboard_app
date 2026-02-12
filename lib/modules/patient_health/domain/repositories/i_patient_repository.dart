@@ -33,6 +33,14 @@ abstract interface class IPatientRepository {
   /// [range] - Time range: "1D" (1 day), "1W" (1 week), "1M" (1 month)
   Future<List<VitalHistoryPoint>> getVitalHistory(String vitalId, String range);
 
+  /// Save a vital sign measurement to local history
+  /// Used by BLE listener to record time-series data from sensors
+  Future<void> saveVitalMeasurement({
+    required String vitalType,
+    required double value,
+    String? unit,
+  });
+
   /// Save paired BLE sensor device ID
   /// [remoteId] - The BLE device remote ID to save
   Future<void> saveSensor(String remoteId);

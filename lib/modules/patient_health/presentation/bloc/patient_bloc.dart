@@ -217,6 +217,32 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
     if (currentState is PatientHealthLoadedState) {
       emit(PatientHealthLoadedState(healthSummary: updatedSummary));
     }
+
+    // Persist measurements to local history (non-blocking, fire-and-forget)
+    _persistBleData(event.temperature, event.humidity);
+  }
+
+  /// Persist BLE data to local Hive history for charts.
+  /// Runs asynchronously — errors are logged but never propagate.
+  void _persistBleData(double? temperature, double? humidity) {
+    try {
+      if (temperature != null) {
+        repository.saveVitalMeasurement(
+          vitalType: 'temperature',
+          value: temperature,
+          unit: '°C',
+        );
+      }
+      if (humidity != null && humidity > 0) {
+        repository.saveVitalMeasurement(
+          vitalType: 'oxygenSaturation',
+          value: humidity,
+          unit: '%',
+        );
+      }
+    } catch (e) {
+      logger.warn('PatientBloc: Error persisting BLE data: $e');
+    }
   }
 
   /// Handle connect sensor event

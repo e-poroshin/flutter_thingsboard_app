@@ -1,11 +1,12 @@
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
 import 'package:thingsboard_app/modules/patient_health/data/models/task_hive_model.dart';
+import 'package:thingsboard_app/modules/patient_health/data/models/vital_history_hive_model.dart';
 
 /// PATIENT APP: Patient Local Datasource
 ///
-/// Handles local persistence of tasks using Hive.
-/// Provides CRUD operations for tasks stored locally on the device.
+/// Handles local persistence of tasks and vital history using Hive.
+/// Provides CRUD operations for tasks and time-series vital data.
 
 class PatientLocalDatasource {
   PatientLocalDatasource({
@@ -15,7 +16,10 @@ class PatientLocalDatasource {
   final TbLogger logger;
   static const String _boxName = 'tasks_box';
   static const String _settingsBoxName = 'settings_box';
+  static const String _vitalHistoryBoxName = 'vital_history_box';
+  static const int _maxHistoryPointsPerType = 1000;
   Box<TaskHiveModel>? _box;
+  Box<VitalHistoryHiveModel>? _vitalHistoryBox;
 
   /// Initialize Hive boxes for tasks and settings
   /// Must be called before any other operations
@@ -40,6 +44,22 @@ class PatientLocalDatasource {
         await Hive.openBox(_settingsBoxName);
         logger.debug(
           'PatientLocalDatasource: Opened Hive box "$_settingsBoxName"',
+        );
+      }
+
+      // Open vital history box (stores time-series vital measurements from BLE)
+      if (!Hive.isBoxOpen(_vitalHistoryBoxName)) {
+        _vitalHistoryBox =
+            await Hive.openBox<VitalHistoryHiveModel>(_vitalHistoryBoxName);
+        logger.debug(
+          'PatientLocalDatasource: Opened Hive box "$_vitalHistoryBoxName" '
+          'with ${_vitalHistoryBox!.length} measurements',
+        );
+      } else {
+        _vitalHistoryBox =
+            Hive.box<VitalHistoryHiveModel>(_vitalHistoryBoxName);
+        logger.debug(
+          'PatientLocalDatasource: Using existing Hive box "$_vitalHistoryBoxName"',
         );
       }
     } catch (e, s) {
@@ -195,7 +215,126 @@ class PatientLocalDatasource {
     }
   }
 
-  /// Ensure the box is initialized
+  // ============================================================
+  // Vital History Methods
+  // ============================================================
+
+  /// Save a single vital measurement to history.
+  /// Appends the measurement and trims oldest entries if the list
+  /// exceeds [_maxHistoryPointsPerType] for that vital type.
+  Future<void> saveVitalMeasurement(VitalHistoryHiveModel measurement) async {
+    try {
+      if (_vitalHistoryBox == null || !_vitalHistoryBox!.isOpen) {
+        // Lazy-open if init() hasn't run yet
+        if (!Hive.isBoxOpen(_vitalHistoryBoxName)) {
+          _vitalHistoryBox =
+              await Hive.openBox<VitalHistoryHiveModel>(_vitalHistoryBoxName);
+        } else {
+          _vitalHistoryBox =
+              Hive.box<VitalHistoryHiveModel>(_vitalHistoryBoxName);
+        }
+      }
+
+      // Add the new measurement (auto-incremented int key)
+      await _vitalHistoryBox!.add(measurement);
+
+      // Trim: keep only the latest _maxHistoryPointsPerType per type
+      final allOfType = _vitalHistoryBox!.values
+          .where((m) => m.vitalType == measurement.vitalType)
+          .toList();
+
+      if (allOfType.length > _maxHistoryPointsPerType) {
+        // Sort ascending by timestamp
+        allOfType.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+        // Delete the oldest entries beyond the limit
+        final toRemove =
+            allOfType.sublist(0, allOfType.length - _maxHistoryPointsPerType);
+        for (final old in toRemove) {
+          await old.delete(); // HiveObject.delete() removes from box
+        }
+
+        logger.debug(
+          'PatientLocalDatasource: Trimmed ${toRemove.length} old '
+          '${measurement.vitalType} measurements',
+        );
+      }
+    } catch (e, s) {
+      logger.error(
+        'PatientLocalDatasource: Error saving vital measurement',
+        e,
+        s,
+      );
+      // Don't rethrow — recording history is non-critical
+    }
+  }
+
+  /// Get historical measurements for a specific vital type.
+  /// Returns points sorted ascending by timestamp.
+  /// Optional [since] parameter to filter by time range.
+  Future<List<VitalHistoryHiveModel>> getVitalHistory(
+    String vitalType, {
+    DateTime? since,
+  }) async {
+    try {
+      if (_vitalHistoryBox == null || !_vitalHistoryBox!.isOpen) {
+        if (!Hive.isBoxOpen(_vitalHistoryBoxName)) {
+          _vitalHistoryBox =
+              await Hive.openBox<VitalHistoryHiveModel>(_vitalHistoryBoxName);
+        } else {
+          _vitalHistoryBox =
+              Hive.box<VitalHistoryHiveModel>(_vitalHistoryBoxName);
+        }
+      }
+
+      var results = _vitalHistoryBox!.values
+          .where((m) => m.vitalType == vitalType)
+          .toList();
+
+      // Filter by time range if provided
+      if (since != null) {
+        results = results
+            .where((m) => m.timestamp.isAfter(since))
+            .toList();
+      }
+
+      // Sort ascending by timestamp
+      results.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+      logger.debug(
+        'PatientLocalDatasource: Retrieved ${results.length} history points '
+        'for $vitalType'
+        '${since != null ? ' since $since' : ''}',
+      );
+
+      return results;
+    } catch (e, s) {
+      logger.error(
+        'PatientLocalDatasource: Error getting vital history',
+        e,
+        s,
+      );
+      return [];
+    }
+  }
+
+  /// Clear all vital history data
+  Future<void> clearVitalHistory() async {
+    try {
+      if (_vitalHistoryBox != null && _vitalHistoryBox!.isOpen) {
+        await _vitalHistoryBox!.clear();
+        logger.debug('PatientLocalDatasource: Cleared all vital history');
+      }
+    } catch (e, s) {
+      logger.error(
+        'PatientLocalDatasource: Error clearing vital history',
+        e,
+        s,
+      );
+    }
+  }
+
+  /// Ensure the tasks box is initialized
   void _ensureInitialized() {
     if (_box == null || !_box!.isOpen) {
       throw StateError(
