@@ -7,12 +7,14 @@ import 'package:thingsboard_app/core/network/nest_api_config.dart';
 import 'package:thingsboard_app/core/network/nest_api_exceptions.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/patient_health/di/patient_health_di.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/health_record_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_sign_entity.dart' as domain_entities;
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/bloc/patient_bloc.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/bloc/patient_event.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/bloc/patient_state.dart';
 import 'package:thingsboard_app/modules/patient_health/presentation/view/vital_detail_page.dart';
+import 'package:thingsboard_app/modules/patient_health/presentation/widgets/add_symptom_sheet.dart';
 import 'package:thingsboard_app/widgets/tb_app_bar.dart';
 
 /// PATIENT APP: Patient Health Page
@@ -319,6 +321,23 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
             ),
           ],
         ),
+        floatingActionButton: FloatingActionButton(
+          onPressed: () {
+            showModalBottomSheet(
+              context: context,
+              isScrollControlled: true,
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              builder: (_) => BlocProvider.value(
+                value: context.read<PatientBloc>(),
+                child: const AddSymptomSheet(),
+              ),
+            );
+          },
+          backgroundColor: Colors.teal,
+          child: const Icon(Icons.edit_note, color: Colors.white),
+        ),
         body: BlocBuilder<PatientBloc, PatientState>(
           builder: (context, state) {
             // Safety check: If this page is VISIBLE and the Bloc state is not
@@ -564,6 +583,58 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
 
             const SizedBox(height: 16),
 
+            // Symptom Logs section
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Symptom Logs',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                if (summary.recentRecords.isNotEmpty)
+                  Text(
+                    '${summary.recentRecords.length} entries',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey[500],
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (summary.recentRecords.isEmpty)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Center(
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.edit_note,
+                          size: 40,
+                          color: Colors.grey[400],
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'No symptom logs yet.\n'
+                          'Tap the button below to log how you feel.',
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              )
+            else
+              ...summary.recentRecords.take(5).map(
+                    (record) => _buildHealthRecordCard(record),
+                  ),
+
+            const SizedBox(height: 16),
+
             // Recent observations section
             const Text(
               'Recent Observations',
@@ -680,6 +751,89 @@ class _PatientHealthPageState extends TbContextState<PatientHealthPage>
             child: const Text('Retry'),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Build a card for a patient-reported health record
+  Widget _buildHealthRecordCard(HealthRecordEntity record) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header: mood emoji + label + time ago
+            Row(
+              children: [
+                Text(
+                  record.moodEmoji,
+                  style: const TextStyle(fontSize: 24),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Feeling ${record.moodLabel}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 15,
+                        ),
+                      ),
+                      Text(
+                        record.timeAgo,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[500],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            // Symptoms
+            if (record.symptoms.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: record.symptoms
+                    .map(
+                      (s) => Chip(
+                        label: Text(
+                          s,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        backgroundColor: Colors.orange.shade50,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        labelPadding:
+                            const EdgeInsets.symmetric(horizontal: 8),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ],
+            // Note
+            if (record.note != null && record.note!.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                record.note!,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey[700],
+                  fontStyle: FontStyle.italic,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

@@ -2,6 +2,7 @@
 ///
 /// Export all domain entities for convenient imports.
 
+export 'health_record_entity.dart';
 export 'patient_entity.dart';
 export 'task_entity.dart';
 export 'vital_history_point.dart';

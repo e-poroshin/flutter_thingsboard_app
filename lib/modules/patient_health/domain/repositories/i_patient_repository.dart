@@ -1,3 +1,4 @@
+import 'package:thingsboard_app/modules/patient_health/domain/entities/health_record_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_history_point.dart';
@@ -41,6 +42,12 @@ abstract interface class IPatientRepository {
     String? unit,
   });
 
+  /// Add a patient-reported health record (symptoms, mood, notes)
+  Future<void> addHealthRecord(HealthRecordEntity record);
+
+  /// Get all patient-reported health records, newest first
+  Future<List<HealthRecordEntity>> getHealthRecords();
+
   /// Save paired BLE sensor device ID
   /// [remoteId] - The BLE device remote ID to save
   Future<void> saveSensor(String remoteId);
@@ -79,6 +86,7 @@ class PatientHealthSummary {
     this.lastUpdated,
     this.vitalSigns = const [],
     this.recentObservations = const [],
+    this.recentRecords = const [],
   });
 
   final String patientId;
@@ -86,6 +94,9 @@ class PatientHealthSummary {
   final DateTime? lastUpdated;
   final List<VitalSign> vitalSigns;
   final List<ClinicalObservation> recentObservations;
+
+  /// Patient-reported symptom/mood records
+  final List<HealthRecordEntity> recentRecords;
 }
 
 /// Domain entity for vital signs from IoT devices

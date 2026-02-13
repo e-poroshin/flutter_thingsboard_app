@@ -3,9 +3,11 @@ import 'package:thingsboard_app/modules/patient_health/data/datasources/medplum_
 import 'package:thingsboard_app/modules/patient_health/data/datasources/nest_auth_remote_datasource.dart';
 import 'package:thingsboard_app/modules/patient_health/data/datasources/patient_local_datasource.dart';
 import 'package:thingsboard_app/modules/patient_health/data/datasources/tb_telemetry_datasource.dart';
+import 'package:thingsboard_app/modules/patient_health/data/models/health_record_hive_model.dart';
 import 'package:thingsboard_app/modules/patient_health/data/models/models.dart';
 import 'package:thingsboard_app/modules/patient_health/data/models/task_hive_model.dart';
 import 'package:thingsboard_app/modules/patient_health/data/models/vital_history_hive_model.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/health_record_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_history_point.dart';
@@ -256,6 +258,45 @@ class PatientRepositoryImpl implements IPatientRepository {
   }
 
   @override
+  Future<void> addHealthRecord(HealthRecordEntity record) async {
+    logger?.debug('PatientRepositoryImpl: Adding health record "${record.id}"');
+    try {
+      final hiveModel = HealthRecordHiveModel.fromEntity(record);
+      await localDatasource.saveHealthRecord(hiveModel);
+      logger?.debug(
+        'PatientRepositoryImpl: Health record "${record.id}" saved successfully',
+      );
+    } catch (e, s) {
+      logger?.error(
+        'PatientRepositoryImpl: Error adding health record',
+        e,
+        s,
+      );
+      rethrow;
+    }
+  }
+
+  @override
+  Future<List<HealthRecordEntity>> getHealthRecords() async {
+    logger?.debug('PatientRepositoryImpl: Getting health records');
+    try {
+      final hiveModels = await localDatasource.getHealthRecords();
+      final entities = hiveModels.map((m) => m.toEntity()).toList();
+      logger?.debug(
+        'PatientRepositoryImpl: Retrieved ${entities.length} health records',
+      );
+      return entities;
+    } catch (e, s) {
+      logger?.error(
+        'PatientRepositoryImpl: Error getting health records',
+        e,
+        s,
+      );
+      return [];
+    }
+  }
+
+  @override
   Future<void> saveSensor(String remoteId) async {
     logger?.debug('PatientRepositoryImpl: Saving sensor ID: $remoteId');
     try {
@@ -457,11 +498,13 @@ class PatientRepositoryImpl implements IPatientRepository {
         getPatientProfile(),
         getLatestVitals(),
         _fetchClinicalObservationsRaw(),
+        getHealthRecords(),
       ]);
 
       final patientEntity = results[0] as PatientEntity;
       final vitalEntities = results[1] as List<VitalSignEntity>;
       final observations = results[2] as List<Map<String, dynamic>>;
+      final healthRecords = results[3] as List<HealthRecordEntity>;
 
       // Convert VitalSignEntity to legacy VitalSign
       final legacyVitalSigns = vitalEntities.map(_mapToLegacyVitalSign).toList();
@@ -473,6 +516,7 @@ class PatientRepositoryImpl implements IPatientRepository {
         lastUpdated: DateTime.now(),
         vitalSigns: legacyVitalSigns,
         recentObservations: clinicalObservations,
+        recentRecords: healthRecords,
       );
     } catch (e) {
       logger?.error('PatientRepositoryImpl: Error getting health summary', e);

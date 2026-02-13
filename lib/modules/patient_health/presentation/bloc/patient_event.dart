@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/health_record_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
 
 /// PATIENT APP: Patient Health BLoC Events
@@ -105,4 +106,14 @@ final class PatientBleUpdateEvent extends PatientEvent {
 /// Dispatched after saving a sensor ID to immediately start listening
 final class PatientConnectSensorEvent extends PatientEvent {
   const PatientConnectSensorEvent();
+}
+
+/// Event to add a patient-reported health record (symptoms, mood, notes)
+final class PatientAddRecordEvent extends PatientEvent {
+  const PatientAddRecordEvent({required this.record});
+
+  final HealthRecordEntity record;
+
+  @override
+  List<Object?> get props => [record];
 }

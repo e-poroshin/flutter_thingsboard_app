@@ -85,6 +85,8 @@ dependencies:
   fl_chart: ^0.68.0
   # PATIENT APP: BLE Sensor Scanning
   flutter_blue_plus: ^1.35.0
+  # PATIENT APP: UUID generation for health records
+  uuid: ^4.5.1
 
 dev_dependencies:
   flutter_test:

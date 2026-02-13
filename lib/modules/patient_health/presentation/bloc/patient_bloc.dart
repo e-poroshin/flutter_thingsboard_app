@@ -7,6 +7,7 @@ import 'package:thingsboard_app/core/services/ble/ble_sensor_service.dart';
 import 'package:thingsboard_app/core/services/notification/notification_service.dart';
 import 'package:thingsboard_app/core/services/notification/task_notification_helper.dart';
 import 'package:thingsboard_app/locator.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/health_record_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/repositories/i_patient_repository.dart'
     show IPatientRepository, PatientHealthSummary, VitalSign, VitalSignType;
@@ -32,6 +33,7 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
     on<PatientAddTaskEvent>(_onAddTask);
     on<PatientBleUpdateEvent>(_onBleUpdate);
     on<PatientConnectSensorEvent>(_onConnectSensor);
+    on<PatientAddRecordEvent>(_onAddRecord);
   }
 
   final IPatientRepository repository;
@@ -207,6 +209,7 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
       lastUpdated: DateTime.now(),
       vitalSigns: updatedVitals,
       recentObservations: summaryToUpdate.recentObservations,
+      recentRecords: summaryToUpdate.recentRecords,
     );
 
     // ALWAYS update the cache so BLE data is preserved across page navigations
@@ -340,6 +343,51 @@ class PatientBloc extends Bloc<PatientEvent, PatientState> {
     }
 
     return updatedVitals;
+  }
+
+  /// Handle adding a patient-reported health record
+  Future<void> _onAddRecord(
+    PatientAddRecordEvent event,
+    Emitter<PatientState> emit,
+  ) async {
+    logger.debug('PatientBloc: Adding health record - mood: ${event.record.mood}');
+
+    try {
+      // Step 1: Save to repository
+      await repository.addHealthRecord(event.record);
+      logger.debug('PatientBloc: Health record saved successfully');
+
+      // Step 2: Update the cached health summary with the new record
+      final summaryToUpdate = (state is PatientHealthLoadedState)
+          ? (state as PatientHealthLoadedState).healthSummary
+          : _cachedHealthSummary;
+
+      if (summaryToUpdate != null) {
+        // Prepend the new record (newest first)
+        final updatedRecords = [
+          event.record,
+          ...summaryToUpdate.recentRecords,
+        ];
+
+        final updatedSummary = PatientHealthSummary(
+          patientId: summaryToUpdate.patientId,
+          patientName: summaryToUpdate.patientName,
+          lastUpdated: DateTime.now(),
+          vitalSigns: summaryToUpdate.vitalSigns,
+          recentObservations: summaryToUpdate.recentObservations,
+          recentRecords: updatedRecords,
+        );
+
+        _cachedHealthSummary = updatedSummary;
+        emit(PatientHealthLoadedState(healthSummary: updatedSummary));
+      }
+    } catch (e, s) {
+      logger.error('PatientBloc: Error adding health record', e, s);
+      emit(PatientErrorState(
+        message: 'Failed to save health record',
+        exception: e,
+      ));
+    }
   }
 
   @override

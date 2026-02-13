@@ -1,8 +1,10 @@
 import 'dart:math';
 
 import 'package:thingsboard_app/modules/patient_health/data/datasources/patient_local_datasource.dart';
+import 'package:thingsboard_app/modules/patient_health/data/models/health_record_hive_model.dart';
 import 'package:thingsboard_app/modules/patient_health/data/models/task_hive_model.dart';
 import 'package:thingsboard_app/modules/patient_health/data/models/vital_history_hive_model.dart';
+import 'package:thingsboard_app/modules/patient_health/domain/entities/health_record_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/patient_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/task_entity.dart';
 import 'package:thingsboard_app/modules/patient_health/domain/entities/vital_history_point.dart';
@@ -390,6 +392,33 @@ class MockPatientRepository implements repo.IPatientRepository {
   }
 
   @override
+  Future<void> addHealthRecord(HealthRecordEntity record) async {
+    await _simulateNetworkDelay();
+
+    if (localDatasource != null) {
+      try {
+        final hiveModel = HealthRecordHiveModel.fromEntity(record);
+        await localDatasource!.saveHealthRecord(hiveModel);
+      } catch (e) {
+        // If persistence fails, just log and continue
+      }
+    }
+  }
+
+  @override
+  Future<List<HealthRecordEntity>> getHealthRecords() async {
+    if (localDatasource != null) {
+      try {
+        final hiveModels = await localDatasource!.getHealthRecords();
+        return hiveModels.map((m) => m.toEntity()).toList();
+      } catch (e) {
+        return [];
+      }
+    }
+    return [];
+  }
+
+  @override
   Future<void> saveSensor(String remoteId) async {
     await _simulateNetworkDelay();
     
@@ -430,6 +459,9 @@ class MockPatientRepository implements repo.IPatientRepository {
     await _simulateNetworkDelay();
 
     final now = DateTime.now();
+
+    // Fetch persisted health records if available
+    final healthRecords = await getHealthRecords();
 
     return repo.PatientHealthSummary(
       patientId: patientId,
@@ -499,6 +531,7 @@ class MockPatientRepository implements repo.IPatientRepository {
           interpretation: 'Normal',
         ),
       ],
+      recentRecords: healthRecords,
     );
   }
 

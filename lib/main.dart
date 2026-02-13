@@ -12,6 +12,7 @@ import 'package:thingsboard_app/constants/enviroment_variables.dart';
 import 'package:thingsboard_app/core/auth/login/select_region/model/region.dart';
 import 'package:thingsboard_app/firebase_options.dart';
 import 'package:thingsboard_app/locator.dart';
+import 'package:thingsboard_app/modules/patient_health/data/models/health_record_hive_model_adapter.dart';
 import 'package:thingsboard_app/modules/patient_health/data/models/task_hive_model_adapter.dart';
 import 'package:thingsboard_app/modules/patient_health/data/models/vital_history_hive_model_adapter.dart';
 import 'package:thingsboard_app/thingsboard_app.dart';
@@ -28,6 +29,7 @@ void main() async {
   // PATIENT APP: Register Hive adapters (manual implementations)
   Hive.registerAdapter(TaskHiveModelAdapter());
   Hive.registerAdapter(VitalHistoryHiveModelAdapter());
+  Hive.registerAdapter(HealthRecordHiveModelAdapter());
   await setUpRootDependencies();
   if (UniversalPlatform.isAndroid) {
     await InAppWebViewController.setWebContentsDebuggingEnabled(

@@ -1,5 +1,6 @@
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
+import 'package:thingsboard_app/modules/patient_health/data/models/health_record_hive_model.dart';
 import 'package:thingsboard_app/modules/patient_health/data/models/task_hive_model.dart';
 import 'package:thingsboard_app/modules/patient_health/data/models/vital_history_hive_model.dart';
 
@@ -17,9 +18,11 @@ class PatientLocalDatasource {
   static const String _boxName = 'tasks_box';
   static const String _settingsBoxName = 'settings_box';
   static const String _vitalHistoryBoxName = 'vital_history_box';
+  static const String _healthRecordBoxName = 'health_records_box';
   static const int _maxHistoryPointsPerType = 1000;
   Box<TaskHiveModel>? _box;
   Box<VitalHistoryHiveModel>? _vitalHistoryBox;
+  Box<HealthRecordHiveModel>? _healthRecordBox;
 
   /// Initialize Hive boxes for tasks and settings
   /// Must be called before any other operations
@@ -60,6 +63,22 @@ class PatientLocalDatasource {
             Hive.box<VitalHistoryHiveModel>(_vitalHistoryBoxName);
         logger.debug(
           'PatientLocalDatasource: Using existing Hive box "$_vitalHistoryBoxName"',
+        );
+      }
+
+      // Open health records box (stores patient-reported symptoms/mood)
+      if (!Hive.isBoxOpen(_healthRecordBoxName)) {
+        _healthRecordBox =
+            await Hive.openBox<HealthRecordHiveModel>(_healthRecordBoxName);
+        logger.debug(
+          'PatientLocalDatasource: Opened Hive box "$_healthRecordBoxName" '
+          'with ${_healthRecordBox!.length} records',
+        );
+      } else {
+        _healthRecordBox =
+            Hive.box<HealthRecordHiveModel>(_healthRecordBoxName);
+        logger.debug(
+          'PatientLocalDatasource: Using existing Hive box "$_healthRecordBoxName"',
         );
       }
     } catch (e, s) {
@@ -331,6 +350,70 @@ class PatientLocalDatasource {
         e,
         s,
       );
+    }
+  }
+
+  // ============================================================
+  // Health Record Methods
+  // ============================================================
+
+  /// Save a patient-reported health record
+  Future<void> saveHealthRecord(HealthRecordHiveModel record) async {
+    try {
+      if (_healthRecordBox == null || !_healthRecordBox!.isOpen) {
+        if (!Hive.isBoxOpen(_healthRecordBoxName)) {
+          _healthRecordBox =
+              await Hive.openBox<HealthRecordHiveModel>(_healthRecordBoxName);
+        } else {
+          _healthRecordBox =
+              Hive.box<HealthRecordHiveModel>(_healthRecordBoxName);
+        }
+      }
+
+      await _healthRecordBox!.put(record.id, record);
+      logger.debug(
+        'PatientLocalDatasource: Saved health record "${record.id}"',
+      );
+    } catch (e, s) {
+      logger.error(
+        'PatientLocalDatasource: Error saving health record',
+        e,
+        s,
+      );
+      rethrow;
+    }
+  }
+
+  /// Get all health records, sorted by timestamp descending (newest first)
+  Future<List<HealthRecordHiveModel>> getHealthRecords() async {
+    try {
+      if (_healthRecordBox == null || !_healthRecordBox!.isOpen) {
+        if (!Hive.isBoxOpen(_healthRecordBoxName)) {
+          _healthRecordBox =
+              await Hive.openBox<HealthRecordHiveModel>(_healthRecordBoxName);
+        } else {
+          _healthRecordBox =
+              Hive.box<HealthRecordHiveModel>(_healthRecordBoxName);
+        }
+      }
+
+      final records = _healthRecordBox!.values.toList();
+
+      // Sort descending by timestamp (newest first)
+      records.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+      logger.debug(
+        'PatientLocalDatasource: Retrieved ${records.length} health records',
+      );
+
+      return records;
+    } catch (e, s) {
+      logger.error(
+        'PatientLocalDatasource: Error getting health records',
+        e,
+        s,
+      );
+      return [];
     }
   }
 
