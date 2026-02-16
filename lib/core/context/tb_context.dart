@@ -72,7 +72,19 @@ class TbContext implements PopEntry {
   Future<void> init() async {
     _handleRootState = true;
 
-    final endpoint = await getIt<IEndpointService>().getEndpoint();
+    final endpointService = getIt<IEndpointService>();
+    var endpoint = await endpointService.getEndpoint();
+
+    // Safety net: if the endpoint is still empty after EndpointService
+    // resolution (should not happen after the fallback fix), use demo server
+    // and persist it so subsequent calls are consistent.
+    if (endpoint.isEmpty) {
+      const fallback = 'https://demo.thingsboard.io';
+      log.warn('TbContext::init() endpoint was empty, using fallback: $fallback');
+      await endpointService.setEndpoint(fallback);
+      endpoint = fallback;
+    }
+
     log.debug('TbContext::init() endpoint: $endpoint');
 
     tbClient = ThingsboardClient(

@@ -10,6 +10,11 @@ class EndpointService implements IEndpointService {
   static const northAmericaHost = 'https://thingsboard.cloud';
   static const europeHost = 'https://eu.thingsboard.cloud';
 
+  /// Fallback endpoint used when no endpoint is configured (fresh install
+  /// without --dart-define=thingsboardApiEndpoint). Prevents "No host
+  /// specified in URI" errors on the very first cold start.
+  static const _fallbackEndpoint = 'https://demo.thingsboard.io';
+
   final ILocalDatabaseService databaseService;
   String? _cachedEndpoint;
   final _notifierValue = ValueNotifier<String?>(UniqueKey().toString());
@@ -40,7 +45,18 @@ class EndpointService implements IEndpointService {
   Future<String> getEndpoint() async {
     _cachedEndpoint ??= await databaseService.getSelectedEndpoint();
 
-    return _cachedEndpoint ?? ThingsboardAppConstants.thingsBoardApiEndpoint;
+    final endpoint =
+        _cachedEndpoint ?? ThingsboardAppConstants.thingsBoardApiEndpoint;
+
+    // On a fresh install the compile-time constant may be an empty string
+    // (no --dart-define). Return the fallback so ThingsboardClient always
+    // gets a valid host on the very first launch.
+    if (endpoint.isEmpty) {
+      _cachedEndpoint = _fallbackEndpoint;
+      return _fallbackEndpoint;
+    }
+
+    return endpoint;
   }
 
   @override
@@ -54,7 +70,12 @@ class EndpointService implements IEndpointService {
 
   @override
   String getCachedEndpoint() {
-    return _cachedEndpoint ?? ThingsboardAppConstants.thingsBoardApiEndpoint;
+    final endpoint =
+        _cachedEndpoint ?? ThingsboardAppConstants.thingsBoardApiEndpoint;
+    if (endpoint.isEmpty) {
+      return _fallbackEndpoint;
+    }
+    return endpoint;
   }
 
   @override

@@ -58,11 +58,6 @@ class _LoginPageState extends TbPageState<LoginPage>
     WidgetsBinding.instance.addObserver(this);
     LoginDi.init();
 
-    // DEBUG: Pre-fill endpoint in debug mode to prevent crash on startup
-    if (kDebugMode) {
-      _ensureEndpointSet();
-    }
-
     if (tbClient.isPreVerificationToken()) {
       SchedulerBinding.instance.addPostFrameCallback((_) {
         getIt<ThingsboardAppRouter>().navigateTo('/login/mfa');
@@ -76,24 +71,6 @@ class _LoginPageState extends TbPageState<LoginPage>
         });
       }
     });
-  }
-
-  /// DEBUG: Ensure endpoint is set to prevent "No host specified" errors
-  Future<void> _ensureEndpointSet() async {
-    if (!kDebugMode) return;
-
-    try {
-      final endpointService = getIt<IEndpointService>();
-      final currentEndpoint = endpointService.getCachedEndpoint();
-
-      if (currentEndpoint == null || currentEndpoint.isEmpty) {
-        const defaultEndpoint = 'https://demo.thingsboard.io';
-        debugPrint('DEBUG: No endpoint set, defaulting to $defaultEndpoint');
-        await endpointService.setEndpoint(defaultEndpoint);
-      }
-    } catch (e) {
-      debugPrint('DEBUG: Error ensuring endpoint: $e');
-    }
   }
 
   @override
