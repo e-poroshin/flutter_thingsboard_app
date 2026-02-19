@@ -92,9 +92,12 @@ class NestApiClient {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
-          // Skip auth header for login/register endpoints
-          final isAuthEndpoint = options.path.contains('/auth/login') ||
-              options.path.contains('/auth/register');
+          // Skip auth header for login/register endpoints.
+          // These are public endpoints that must not carry stale tokens.
+          final path = options.path.toLowerCase();
+          final isAuthEndpoint = path.contains('/auth/login') ||
+              path.contains('/auth/register') ||
+              path.contains('/patient/login');
 
           if (!isAuthEndpoint) {
             final token = await getAccessToken();

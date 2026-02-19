@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
+import 'package:thingsboard_app/core/network/nest_api_exceptions.dart';
 import 'package:thingsboard_app/modules/patient_health/data/datasources/medplum_remote_datasource.dart';
 import 'package:thingsboard_app/modules/patient_health/data/datasources/nest_auth_remote_datasource.dart';
 import 'package:thingsboard_app/modules/patient_health/data/datasources/patient_local_datasource.dart';
@@ -54,6 +57,11 @@ class PatientRepositoryImpl implements IPatientRepository {
   /// Cached user profile (contains linked IDs)
   UserProfileDTO? _cachedProfile;
 
+  /// Completer to deduplicate concurrent fetchUserProfile() calls.
+  /// When multiple methods (e.g. getPatientProfile + getLatestVitals) call
+  /// fetchUserProfile() in parallel, only ONE network request is made.
+  Completer<UserProfileDTO>? _profileCompleter;
+
   /// Get the current user profile (cached)
   UserProfileDTO? get currentProfile => _cachedProfile;
 
@@ -63,19 +71,63 @@ class PatientRepositoryImpl implements IPatientRepository {
 
   /// Fetch and cache the user profile
   /// This MUST be called first to get medplumPatientId and thingsboardDeviceId
+  ///
+  /// Uses a [Completer] to deduplicate concurrent calls — if three callers
+  /// call this at the same time, only one HTTP request is made and the
+  /// result is shared.
   Future<UserProfileDTO> fetchUserProfile({bool forceRefresh = false}) async {
     if (_cachedProfile != null && !forceRefresh) {
       return _cachedProfile!;
     }
 
-    logger?.debug('PatientRepositoryImpl: Fetching user profile...');
-    _cachedProfile = await authDatasource.getProfile();
-    logger?.debug(
-      'PatientRepositoryImpl: Profile loaded - '
-      'medplumPatientId: ${_cachedProfile?.medplumPatientId}, '
-      'thingsboardDeviceId: ${_cachedProfile?.thingsboardDeviceId}',
-    );
-    return _cachedProfile!;
+    // Deduplicate: if a fetch is already in-flight, piggyback on it.
+    if (_profileCompleter != null) {
+      return _profileCompleter!.future;
+    }
+
+    _profileCompleter = Completer<UserProfileDTO>();
+
+    try {
+      logger?.debug('PatientRepositoryImpl: Fetching user profile...');
+
+      UserProfileDTO profile;
+      try {
+        profile = await authDatasource.getProfile();
+      } on NestApiException catch (e) {
+        // ── Fallback: profile endpoint not available yet ──────────
+        if (e.statusCode == 404) {
+          logger?.warn(
+            'PatientRepositoryImpl: /auth/profile returned 404 — '
+            'using minimal fallback profile. '
+            'Remote data features will be unavailable.',
+          );
+          profile = const UserProfileDTO(
+            id: '0',
+            email: '',
+            medplumPatientId: null,
+            thingsboardDeviceId: null,
+          );
+        } else {
+          rethrow;
+        }
+      }
+
+      _cachedProfile = profile;
+
+      logger?.debug(
+        'PatientRepositoryImpl: Profile loaded - '
+        'medplumPatientId: ${_cachedProfile?.medplumPatientId}, '
+        'thingsboardDeviceId: ${_cachedProfile?.thingsboardDeviceId}',
+      );
+
+      _profileCompleter!.complete(profile);
+      return profile;
+    } catch (e) {
+      _profileCompleter!.completeError(e);
+      rethrow;
+    } finally {
+      _profileCompleter = null;
+    }
   }
 
   /// Clear the cached profile (e.g., on logout)
@@ -93,20 +145,41 @@ class PatientRepositoryImpl implements IPatientRepository {
     final userProfile = await fetchUserProfile();
 
     // Step 2: Use medplumPatientId if available, otherwise fall back to legacy
-    if (userProfile.hasMedplumPatient) {
-      logger?.debug(
-        'PatientRepositoryImpl: Fetching Medplum patient ${userProfile.medplumPatientId}',
-      );
-      final medplumPatient = await medplumDatasource.fetchPatient(
-        userProfile.medplumPatientId!,
-      );
-      return _mapMedplumPatientToEntity(medplumPatient, userProfile);
-    } else {
-      // Fallback to legacy endpoint
-      logger?.debug('PatientRepositoryImpl: Using legacy patient profile endpoint');
-      final profileData = await medplumDatasource.fetchPatientProfile();
-      return _parsePatientEntity(profileData, userProfile);
+    try {
+      if (userProfile.hasMedplumPatient) {
+        logger?.debug(
+          'PatientRepositoryImpl: Fetching Medplum patient ${userProfile.medplumPatientId}',
+        );
+        final medplumPatient = await medplumDatasource.fetchPatient(
+          userProfile.medplumPatientId!,
+        );
+        return _mapMedplumPatientToEntity(medplumPatient, userProfile);
+      } else {
+        // Fallback to legacy endpoint
+        logger?.debug('PatientRepositoryImpl: Using legacy patient profile endpoint');
+        final profileData = await medplumDatasource.fetchPatientProfile();
+        return _parsePatientEntity(profileData, userProfile);
+      }
+    } on NestApiException catch (e) {
+      if (e.statusCode == 404) {
+        logger?.warn(
+          'PatientRepositoryImpl: Patient profile endpoint returned 404 — '
+          'using minimal fallback patient entity.',
+        );
+        return _buildFallbackPatientEntity(userProfile);
+      }
+      rethrow;
     }
+  }
+
+  /// Build a minimal [PatientEntity] from the user profile when
+  /// the patient profile endpoint is not available (404).
+  PatientEntity _buildFallbackPatientEntity(UserProfileDTO userProfile) {
+    return PatientEntity(
+      id: userProfile.id,
+      fullName: userProfile.fullName,
+      email: userProfile.email,
+    );
   }
 
   @override
@@ -115,19 +188,30 @@ class PatientRepositoryImpl implements IPatientRepository {
     final userProfile = await fetchUserProfile();
 
     // Step 2: Use thingsboardDeviceId if available, otherwise fall back to legacy
-    if (userProfile.hasThingsboardDevice) {
-      logger?.debug(
-        'PatientRepositoryImpl: Fetching telemetry for device ${userProfile.thingsboardDeviceId}',
-      );
-      final telemetry = await telemetryDatasource.fetchLatestTelemetry(
-        userProfile.thingsboardDeviceId!,
-      );
-      return _mapTelemetryToVitals(telemetry);
-    } else {
-      // Fallback to legacy endpoint
-      logger?.debug('PatientRepositoryImpl: Using legacy vitals endpoint');
-      final vitalsData = await telemetryDatasource.fetchLatestVitals();
-      return _parseVitalSignEntities(vitalsData);
+    try {
+      if (userProfile.hasThingsboardDevice) {
+        logger?.debug(
+          'PatientRepositoryImpl: Fetching telemetry for device ${userProfile.thingsboardDeviceId}',
+        );
+        final telemetry = await telemetryDatasource.fetchLatestTelemetry(
+          userProfile.thingsboardDeviceId!,
+        );
+        return _mapTelemetryToVitals(telemetry);
+      } else {
+        // Fallback to legacy endpoint
+        logger?.debug('PatientRepositoryImpl: Using legacy vitals endpoint');
+        final vitalsData = await telemetryDatasource.fetchLatestVitals();
+        return _parseVitalSignEntities(vitalsData);
+      }
+    } on NestApiException catch (e) {
+      if (e.statusCode == 404) {
+        logger?.warn(
+          'PatientRepositoryImpl: Vitals endpoint returned 404 — '
+          'returning empty vitals list.',
+        );
+        return [];
+      }
+      rethrow;
     }
   }
 
@@ -334,37 +418,149 @@ class PatientRepositoryImpl implements IPatientRepository {
     String vitalId,
     String range,
   ) async {
-    // Step 1: Try local history from Hive (collected from BLE sensor)
+    final since = _getSinceFromRange(range);
+    final now = DateTime.now();
+
+    // ── Step 1: Fetch Remote observations from Medplum ──────────
+    List<VitalHistoryPoint> remotePoints = [];
     try {
-      final since = _getSinceFromRange(range);
+      final profile = await fetchUserProfile();
+
+      if (profile.hasMedplumPatient) {
+        final loincCode = _vitalIdToLoincCode(vitalId);
+
+        if (loincCode != null) {
+          logger?.debug(
+            'PatientRepositoryImpl: Fetching remote observations for '
+            '$vitalId (LOINC: $loincCode) since $since',
+          );
+
+          final observations =
+              await medplumDatasource.fetchObservationsByCode(
+            profile.medplumPatientId!,
+            code: loincCode,
+            from: since,
+            to: now,
+          );
+
+          remotePoints = observations
+              .where((obs) => obs.numericValue != null)
+              .map((obs) => VitalHistoryPoint(
+                    timestamp: obs.effectiveDateTime ?? now,
+                    value: obs.numericValue!,
+                  ))
+              .toList();
+
+          logger?.debug(
+            'PatientRepositoryImpl: Got ${remotePoints.length} remote '
+            'points for $vitalId',
+          );
+        } else {
+          logger?.debug(
+            'PatientRepositoryImpl: No LOINC mapping for "$vitalId", '
+            'skipping remote fetch',
+          );
+        }
+      }
+    } catch (e) {
+      logger?.warn(
+        'PatientRepositoryImpl: Error fetching remote history for '
+        '$vitalId: $e',
+      );
+      // Continue — local data alone is still valuable
+    }
+
+    // ── Step 2: Fetch Local history (all Hive items for this type) ──
+    List<VitalHistoryPoint> localPoints = [];
+    try {
       final localHistory = await localDatasource.getVitalHistory(
         vitalId,
         since: since,
       );
 
-      if (localHistory.isNotEmpty) {
-        logger?.debug(
-          'PatientRepositoryImpl: Returning ${localHistory.length} local '
-          'history points for $vitalId',
-        );
-        return localHistory
-            .map((m) => VitalHistoryPoint(
-                  timestamp: m.timestamp,
-                  value: m.value,
-                ))
-            .toList();
-      }
+      localPoints = localHistory
+          .map((m) => VitalHistoryPoint(
+                timestamp: m.timestamp,
+                value: m.value,
+              ))
+          .toList();
+
+      logger?.debug(
+        'PatientRepositoryImpl: Got ${localPoints.length} local '
+        'points for $vitalId',
+      );
     } catch (e) {
       logger?.warn(
-        'PatientRepositoryImpl: Error reading local history: $e',
+        'PatientRepositoryImpl: Error reading local history for '
+        '$vitalId: $e',
       );
     }
 
-    // Step 2: TODO — fetch from NestJS BFF when backend is ready
+    // ── Step 3: Fetch unsynced (dirty) items ────────────────────
+    // These are measurements collected by BLE but not yet pushed
+    // to the backend — we still want them on the chart so the user
+    // sees their latest readings immediately.
+    List<VitalHistoryPoint> dirtyPoints = [];
+    try {
+      final dirtyItems = await localDatasource.getDirtyMeasurements();
+
+      dirtyPoints = dirtyItems
+          .where((m) =>
+              m.vitalType == vitalId && m.timestamp.isAfter(since))
+          .map((m) => VitalHistoryPoint(
+                timestamp: m.timestamp,
+                value: m.value,
+              ))
+          .toList();
+
+      if (dirtyPoints.isNotEmpty) {
+        logger?.debug(
+          'PatientRepositoryImpl: Including ${dirtyPoints.length} '
+          'unsynced points for $vitalId',
+        );
+      }
+    } catch (e) {
+      logger?.warn(
+        'PatientRepositoryImpl: Error reading dirty measurements: $e',
+      );
+    }
+
+    // ── Step 4: Merge, deduplicate & sort ───────────────────────
+    // Remote data is the source of truth. Local + dirty data fills
+    // gaps (recent BLE readings not yet on the server).
+    //
+    // Deduplication: two points are considered the same if their
+    // timestamps match within a 1-second window AND their values
+    // are identical. This prevents duplicates when a measurement
+    // has been synced but still exists in Hive.
+    final merged = <VitalHistoryPoint>[];
+
+    // Add remote first (source of truth)
+    merged.addAll(remotePoints);
+
+    // Then add local points that don't overlap with remote
+    for (final local in [...localPoints, ...dirtyPoints]) {
+      final isDuplicate = merged.any((existing) =>
+          (existing.timestamp.difference(local.timestamp).inSeconds).abs() <
+              2 &&
+          (existing.value - local.value).abs() < 0.001);
+      if (!isDuplicate) {
+        merged.add(local);
+      }
+    }
+
+    // Sort ascending by timestamp (charts expect chronological order)
+    merged.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
     logger?.debug(
-      'PatientRepositoryImpl: No local history for $vitalId, returning empty',
+      'PatientRepositoryImpl: Returning ${merged.length} merged '
+      'history points for $vitalId '
+      '(${remotePoints.length} remote + '
+      '${localPoints.length} local + '
+      '${dirtyPoints.length} dirty, deduplicated)',
     );
-    return [];
+
+    return merged;
   }
 
   /// Convert range string to a DateTime cutoff
@@ -388,17 +584,62 @@ class PatientRepositoryImpl implements IPatientRepository {
     required double value,
     String? unit,
   }) async {
+    // ── WAL Step 1: Persist locally with SyncStatus.dirty ──────────
+    // This guarantees that data is never lost, even if the network
+    // call below fails or the app is killed before it completes.
+    final measurement = VitalHistoryHiveModel.fromMeasurement(
+      vitalType: vitalType,
+      value: value,
+      unit: unit,
+      syncStatus: SyncStatus.dirty,
+    );
+
     try {
-      await localDatasource.saveVitalMeasurement(
-        VitalHistoryHiveModel.fromMeasurement(
-          vitalType: vitalType,
-          value: value,
-          unit: unit,
-        ),
-      );
+      await localDatasource.saveVitalMeasurement(measurement);
     } catch (e) {
       logger?.warn(
-        'PatientRepositoryImpl: Error saving vital measurement: $e',
+        'PatientRepositoryImpl: Error saving vital measurement to Hive: $e',
+      );
+      // If even local persistence fails, there's nothing more we can do.
+      return;
+    }
+
+    // ── WAL Step 2: Optimistic network push ────────────────────────
+    // Try to send immediately. If it works we mark as synced right
+    // away; if it fails, the measurement stays dirty and will be
+    // picked up by the TelemetrySyncWorker later.
+    try {
+      final profile = await fetchUserProfile();
+
+      if (profile.hasThingsboardDevice) {
+        final dto = TelemetryRequestDto.fromHiveModel(
+          model: measurement,
+          deviceId: profile.thingsboardDeviceId!,
+          tenantId: profile.id, // tenant derived from user profile
+        );
+
+        await telemetryDatasource.pushTelemetry(dto);
+
+        // ── WAL Step 3a: Mark synced ──────────────────────────────
+        measurement.syncStatus = SyncStatus.synced;
+        await measurement.save(); // HiveObject.save() updates in-place
+
+        logger?.debug(
+          'PatientRepositoryImpl: Measurement pushed & synced '
+          '($vitalType = $value)',
+        );
+      } else {
+        logger?.debug(
+          'PatientRepositoryImpl: No thingsboardDeviceId — '
+          'measurement saved locally as dirty',
+        );
+      }
+    } catch (e) {
+      // ── WAL Step 3b: Leave as dirty ─────────────────────────────
+      // Network/server error — the TelemetrySyncWorker will retry.
+      logger?.warn(
+        'PatientRepositoryImpl: Optimistic push failed for '
+        '$vitalType=$value, will retry later. Error: $e',
       );
     }
   }
@@ -419,22 +660,33 @@ class PatientRepositoryImpl implements IPatientRepository {
   }) async {
     final userProfile = await fetchUserProfile();
 
-    if (userProfile.hasThingsboardDevice) {
-      final history = await telemetryDatasource.fetchTelemetryHistory(
-        userProfile.thingsboardDeviceId!,
-        startTs: startDate.millisecondsSinceEpoch,
-        endTs: endDate.millisecondsSinceEpoch,
-        keys: keys,
-      );
-      return _mapTelemetryHistoryToVitals(history);
-    } else {
-      // Fallback to legacy endpoint
-      final historyData = await telemetryDatasource.fetchVitalsHistory(
-        startTs: startDate.millisecondsSinceEpoch,
-        endTs: endDate.millisecondsSinceEpoch,
-        keys: keys,
-      );
-      return _parseVitalsHistoryData(historyData);
+    try {
+      if (userProfile.hasThingsboardDevice) {
+        final history = await telemetryDatasource.fetchTelemetryHistory(
+          userProfile.thingsboardDeviceId!,
+          startTs: startDate.millisecondsSinceEpoch,
+          endTs: endDate.millisecondsSinceEpoch,
+          keys: keys,
+        );
+        return _mapTelemetryHistoryToVitals(history);
+      } else {
+        // Fallback to legacy endpoint
+        final historyData = await telemetryDatasource.fetchVitalsHistory(
+          startTs: startDate.millisecondsSinceEpoch,
+          endTs: endDate.millisecondsSinceEpoch,
+          keys: keys,
+        );
+        return _parseVitalsHistoryData(historyData);
+      }
+    } on NestApiException catch (e) {
+      if (e.statusCode == 404) {
+        logger?.warn(
+          'PatientRepositoryImpl: Vitals history endpoint returned 404 — '
+          'returning empty history.',
+        );
+        return [];
+      }
+      rethrow;
     }
   }
 
@@ -442,12 +694,23 @@ class PatientRepositoryImpl implements IPatientRepository {
   Future<List<Map<String, dynamic>>> _fetchClinicalObservationsRaw() async {
     final userProfile = await fetchUserProfile();
 
-    if (userProfile.hasMedplumPatient) {
-      return await medplumDatasource.fetchObservations(
-        userProfile.medplumPatientId!,
-      );
-    } else {
-      return await medplumDatasource.fetchPatientObservations();
+    try {
+      if (userProfile.hasMedplumPatient) {
+        return await medplumDatasource.fetchObservations(
+          userProfile.medplumPatientId!,
+        );
+      } else {
+        return await medplumDatasource.fetchPatientObservations();
+      }
+    } on NestApiException catch (e) {
+      if (e.statusCode == 404) {
+        logger?.warn(
+          'PatientRepositoryImpl: Observations endpoint returned 404 — '
+          'returning empty observations list.',
+        );
+        return [];
+      }
+      rethrow;
     }
   }
 
@@ -464,9 +727,20 @@ class PatientRepositoryImpl implements IPatientRepository {
     final userProfile = await fetchUserProfile();
 
     if (userProfile.hasMedplumPatient) {
-      return await medplumDatasource.fetchConditions(
-        userProfile.medplumPatientId!,
-      );
+      try {
+        return await medplumDatasource.fetchConditions(
+          userProfile.medplumPatientId!,
+        );
+      } on NestApiException catch (e) {
+        if (e.statusCode == 404) {
+          logger?.warn(
+            'PatientRepositoryImpl: Conditions endpoint returned 404 — '
+            'returning empty list.',
+          );
+          return [];
+        }
+        rethrow;
+      }
     }
     return [];
   }
@@ -476,9 +750,20 @@ class PatientRepositoryImpl implements IPatientRepository {
     final userProfile = await fetchUserProfile();
 
     if (userProfile.hasMedplumPatient) {
-      return await medplumDatasource.fetchMedications(
-        userProfile.medplumPatientId!,
-      );
+      try {
+        return await medplumDatasource.fetchMedications(
+          userProfile.medplumPatientId!,
+        );
+      } on NestApiException catch (e) {
+        if (e.statusCode == 404) {
+          logger?.warn(
+            'PatientRepositoryImpl: Medications endpoint returned 404 — '
+            'returning empty list.',
+          );
+          return [];
+        }
+        rethrow;
+      }
     }
     return [];
   }
@@ -488,40 +773,107 @@ class PatientRepositoryImpl implements IPatientRepository {
   // ============================================================
 
   /// Get combined patient health summary (legacy method)
+  ///
+  /// Each data source is fetched independently with its own error handling.
+  /// If one source fails (e.g. 404 because backend hasn't implemented it),
+  /// the other sources still contribute data and the UI renders with
+  /// whatever is available — rather than crashing the entire summary.
   @override
   Future<PatientHealthSummary> getPatientHealthSummary(String patientId) async {
     logger?.debug('PatientRepositoryImpl: Getting health summary');
 
-    try {
-      // Fetch data in parallel
-      final results = await Future.wait([
-        getPatientProfile(),
-        getLatestVitals(),
-        _fetchClinicalObservationsRaw(),
-        getHealthRecords(),
-      ]);
+    // ── Pre-fetch user profile once (deduplication via Completer) ───
+    // This avoids 3–4 parallel calls to /auth/profile.
+    await fetchUserProfile();
 
-      final patientEntity = results[0] as PatientEntity;
-      final vitalEntities = results[1] as List<VitalSignEntity>;
-      final observations = results[2] as List<Map<String, dynamic>>;
-      final healthRecords = results[3] as List<HealthRecordEntity>;
+    // ── Fetch each data source independently ───────────────────────
+    // Using individual try-catch instead of Future.wait so one 404
+    // doesn't kill the entire summary.
+    PatientEntity? patientEntity;
+    List<VitalSignEntity> vitalEntities = [];
+    List<Map<String, dynamic>> observations = [];
+    List<HealthRecordEntity> healthRecords = [];
 
-      // Convert VitalSignEntity to legacy VitalSign
-      final legacyVitalSigns = vitalEntities.map(_mapToLegacyVitalSign).toList();
-      final clinicalObservations = _parseClinicalObservations(observations);
+    // Fetch in parallel but handle errors individually
+    await Future.wait([
+      // 1. Patient profile
+      (() async {
+        try {
+          patientEntity = await getPatientProfile();
+        } catch (e) {
+          logger?.warn(
+            'PatientRepositoryImpl: Error fetching patient profile '
+            'for health summary: $e',
+          );
+        }
+      })(),
+      // 2. Latest vitals
+      (() async {
+        try {
+          vitalEntities = await getLatestVitals();
+        } catch (e) {
+          logger?.warn(
+            'PatientRepositoryImpl: Error fetching latest vitals '
+            'for health summary: $e',
+          );
+        }
+      })(),
+      // 3. Clinical observations
+      (() async {
+        try {
+          observations = await _fetchClinicalObservationsRaw();
+        } catch (e) {
+          logger?.warn(
+            'PatientRepositoryImpl: Error fetching observations '
+            'for health summary: $e',
+          );
+        }
+      })(),
+      // 4. Health records (local — should never fail)
+      (() async {
+        try {
+          healthRecords = await getHealthRecords();
+        } catch (e) {
+          logger?.warn(
+            'PatientRepositoryImpl: Error fetching health records '
+            'for health summary: $e',
+          );
+        }
+      })(),
+    ]);
 
-      return PatientHealthSummary(
-        patientId: patientId,
-        patientName: patientEntity.fullName,
-        lastUpdated: DateTime.now(),
-        vitalSigns: legacyVitalSigns,
-        recentObservations: clinicalObservations,
-        recentRecords: healthRecords,
-      );
-    } catch (e) {
-      logger?.error('PatientRepositoryImpl: Error getting health summary', e);
-      rethrow;
-    }
+    // ── Build summary from whatever data we got ────────────────────
+    final patient = patientEntity ??
+        _buildFallbackPatientEntity(
+          _cachedProfile ??
+              const UserProfileDTO(
+                id: '0',
+                email: '',
+                medplumPatientId: null,
+                thingsboardDeviceId: null,
+              ),
+        );
+
+    final legacyVitalSigns =
+        vitalEntities.map(_mapToLegacyVitalSign).toList();
+    final clinicalObservations = _parseClinicalObservations(observations);
+
+    logger?.debug(
+      'PatientRepositoryImpl: Health summary assembled — '
+      'patient: ${patient.fullName}, '
+      'vitals: ${legacyVitalSigns.length}, '
+      'observations: ${clinicalObservations.length}, '
+      'records: ${healthRecords.length}',
+    );
+
+    return PatientHealthSummary(
+      patientId: patientId,
+      patientName: patient.fullName,
+      lastUpdated: DateTime.now(),
+      vitalSigns: legacyVitalSigns,
+      recentObservations: clinicalObservations,
+      recentRecords: healthRecords,
+    );
   }
 
   /// Get patient's vital signs (legacy method)
@@ -804,6 +1156,40 @@ class PatientRepositoryImpl implements IPatientRepository {
       'respiratoryrate' || 'respiratory_rate' || 'rr' => NewVitalSignType.respiratoryRate,
       'bloodglucose' || 'glucose' || 'bg' => NewVitalSignType.bloodGlucose,
       'weight' || 'body_weight' => NewVitalSignType.weight,
+      _ => null,
+    };
+  }
+
+  // ============================================================
+  // LOINC Code Mapping (vitalId → FHIR Observation code)
+  // ============================================================
+
+  /// Map an app-level vital ID (e.g., `"temperature"`) to its
+  /// corresponding LOINC code for FHIR Observation queries.
+  ///
+  /// **Standard LOINC codes used:**
+  /// | vitalId             | LOINC   | Description              |
+  /// |---------------------|---------|--------------------------|
+  /// | temperature         | 8310-5  | Body Temperature         |
+  /// | heartrate / hr      | 8867-4  | Heart Rate               |
+  /// | bloodpressure / bp  | 85354-9 | Blood Pressure Panel     |
+  /// | spo2 / oxygen       | 2708-6  | SpO2                     |
+  /// | respiratoryrate     | 9279-1  | Respiratory Rate         |
+  /// | bloodglucose        | 2339-0  | Blood Glucose            |
+  /// | weight              | 29463-7 | Body Weight              |
+  /// | humidity            | —       | No standard LOINC        |
+  ///
+  /// Returns `null` if no mapping exists (e.g. humidity, which is
+  /// device-specific and not a clinical vital sign).
+  static String? _vitalIdToLoincCode(String vitalId) {
+    return switch (vitalId.toLowerCase()) {
+      'temperature' || 'temp' || 'body_temp' => '8310-5',
+      'heartrate' || 'heart_rate' || 'hr' => '8867-4',
+      'bloodpressure' || 'blood_pressure' || 'bp' => '85354-9',
+      'oxygensaturation' || 'spo2' || 'oxygen' => '2708-6',
+      'respiratoryrate' || 'respiratory_rate' || 'rr' => '9279-1',
+      'bloodglucose' || 'glucose' || 'bg' => '2339-0',
+      'weight' || 'body_weight' => '29463-7',
       _ => null,
     };
   }

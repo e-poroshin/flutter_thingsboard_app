@@ -23,6 +23,21 @@ abstract interface class IMedplumRemoteDatasource {
   /// Endpoint: GET /medplum/Observation?patient={patientId}
   Future<List<Map<String, dynamic>>> fetchObservations(String patientId);
 
+  /// Fetch patient's observations filtered by LOINC/SNOMED code.
+  ///
+  /// Endpoint: GET /medplum/Observation?patient={patientId}&code={code}
+  ///
+  /// Supports optional date range filtering using FHIR `date` search
+  /// parameters (`ge` = greater-or-equal, `le` = less-or-equal).
+  ///
+  /// Returns parsed [VitalObservationDto] objects ready for the UI.
+  Future<List<VitalObservationDto>> fetchObservationsByCode(
+    String patientId, {
+    required String code,
+    DateTime? from,
+    DateTime? to,
+  });
+
   /// Fetch patient's conditions/diagnoses
   /// Endpoint: GET /medplum/Condition?patient={patientId}
   Future<List<Map<String, dynamic>>> fetchConditions(String patientId);
@@ -71,6 +86,38 @@ class MedplumRemoteDatasource implements IMedplumRemoteDatasource {
       NestApiConfig.medplumObservations(patientId),
     );
     return _parseListResponse(response);
+  }
+
+  @override
+  Future<List<VitalObservationDto>> fetchObservationsByCode(
+    String patientId, {
+    required String code,
+    DateTime? from,
+    DateTime? to,
+  }) async {
+    // GET /medplum/Observation?patient={id}&code={code}&date=ge{from}&date=le{to}
+    //
+    // FHIR date search uses prefixes: ge (>=), le (<=), gt (>), lt (<).
+    // Multiple `date` params are AND-ed by the server.
+    final queryParams = <String, dynamic>{
+      'patient': patientId,
+      'code': code,
+      if (from != null) 'date': [
+        'ge${from.toUtc().toIso8601String()}',
+        if (to != null) 'le${to.toUtc().toIso8601String()}',
+      ] else if (to != null)
+        'date': 'le${to.toUtc().toIso8601String()}',
+      // Sort newest-first; _count limits the payload
+      '_sort': '-date',
+      '_count': '200',
+    };
+
+    final response = await apiClient.get<dynamic>(
+      NestApiConfig.medplumObservation,
+      queryParameters: queryParams,
+    );
+
+    return VitalObservationDto.fromJsonList(response);
   }
 
   @override

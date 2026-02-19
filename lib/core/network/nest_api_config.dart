@@ -3,7 +3,7 @@
 /// Configuration constants for the NestJS BFF server.
 ///
 /// **Backend Configuration:**
-/// - Base URL: http://167.172.178.76:30003
+/// - Base URL: http://206.81.28.28:30003
 /// - Architecture: BFF (Backend for Frontend)
 /// - We do NOT connect to ThingsBoard or Medplum directly
 ///
@@ -17,11 +17,11 @@ class NestApiConfig {
 
   /// Development/Staging environment base URL
   /// Official NestJS BFF server
-  static const String devBaseUrl = 'http://167.172.178.76:30003';
+  static const String devBaseUrl = 'http://206.81.28.28:30003';
 
   /// Production environment base URL
   /// TODO: Update when production server is ready
-  static const String prodBaseUrl = 'http://167.172.178.76:30003';
+  static const String prodBaseUrl = 'http://206.81.28.28:30003';
 
   /// Mock mode base URL (dummy placeholder to prevent network calls)
   /// This URL is never actually called - it's just a placeholder
@@ -48,10 +48,12 @@ class NestApiConfig {
   // Authentication Endpoints
   // ============================================================
 
-  /// POST /auth/login - Authenticate user
+  /// POST /api/patient/login - Authenticate patient
   /// Body: { "email": "...", "password": "..." }
-  /// Response: { "accessToken": "..." }
-  static const String authLogin = '/auth/login';
+  /// Response Body: { "id": 1, "role": "PATIENT", "success": true }
+  /// Tokens: Returned in `set-cookie` response headers (HttpOnly cookies).
+  ///         Must be extracted manually on mobile.
+  static const String authLogin = '/api/patient/login';
 
   /// POST /auth/register - Register new user
   static const String authRegister = '/auth/register';
@@ -83,6 +85,10 @@ class NestApiConfig {
   /// GET /medplum/Observation - Get observations for patient
   static String medplumObservations(String patientId) =>
       '/medplum/Observation?patient=$patientId';
+
+  /// GET /medplum/Observation - Get observations filtered by LOINC code
+  /// Supports optional date range via FHIR `date` search params.
+  static const String medplumObservation = '/medplum/Observation';
 
   /// GET /medplum/Condition - Get conditions for patient
   static String medplumConditions(String patientId) =>
@@ -119,6 +125,15 @@ class NestApiConfig {
     final queryString = params.isNotEmpty ? '?${params.join("&")}' : '';
     return '/thingsboard/device/$deviceId/telemetry/history$queryString';
   }
+
+  // ============================================================
+  // Telemetry Sync Endpoints (BLE → Backend)
+  // ============================================================
+
+  /// POST /api/proxy/telemetry - Push BLE sensor data to backend
+  /// Body: { "deviceId": "...", "tenantId": "...", "timestamp": "...",
+  ///         "data": { "temperature": 36.6 } }
+  static const String proxyTelemetry = '/api/proxy/telemetry';
 
   // ============================================================
   // Legacy Endpoints (for backwards compatibility)

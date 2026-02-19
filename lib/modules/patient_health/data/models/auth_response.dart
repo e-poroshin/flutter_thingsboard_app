@@ -1,7 +1,70 @@
-/// PATIENT APP: Authentication Response Model
+/// PATIENT APP: Authentication Response Models
 ///
-/// Data model for NestJS authentication responses.
+/// **Cookie-Based Auth Architecture (POST /api/patient/login):**
+///
+/// The backend returns tokens in HTTP-only `set-cookie` headers, NOT
+/// in the response body. Mobile apps cannot read HttpOnly cookies via
+/// standard cookie jars, so the [NestAuthRemoteDatasource] manually
+/// parses the raw `set-cookie` header strings and stores the tokens
+/// in FlutterSecureStorage.
+///
+/// **Response Body:** `{ "id": 1, "role": "PATIENT", "success": true }`
+/// **Response Headers:** `set-cookie: Authentication=<jwt>; ..., Refresh=<jwt>; ...`
 
+// ============================================================
+// Login Response DTO (Response Body)
+// ============================================================
+
+/// DTO for the POST /api/patient/login response body.
+///
+/// The body only contains user metadata — tokens are in cookies.
+class LoginResponseDto {
+  const LoginResponseDto({
+    required this.id,
+    required this.role,
+    required this.success,
+  });
+
+  /// Backend user ID
+  final int id;
+
+  /// User role (e.g., "PATIENT", "PRACTITIONER")
+  final String role;
+
+  /// Whether the login was successful
+  final bool success;
+
+  factory LoginResponseDto.fromJson(Map<String, dynamic> json) {
+    return LoginResponseDto(
+      id: json['id'] as int? ?? 0,
+      role: json['role'] as String? ?? '',
+      success: json['success'] as bool? ?? false,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'role': role,
+        'success': success,
+      };
+
+  @override
+  String toString() =>
+      'LoginResponseDto(id: $id, role: $role, success: $success)';
+}
+
+// ============================================================
+// Auth Response (Internal — carries extracted tokens)
+// ============================================================
+
+/// Internal auth response used by the Repository and BLoC layers.
+///
+/// Constructed by [NestAuthRemoteDatasource] from:
+/// - **Tokens** extracted from `set-cookie` response headers
+/// - **User info** from the response body ([LoginResponseDto])
+///
+/// The [NestAuthRepository] reads [accessToken] / [refreshToken]
+/// from this object and persists them via [NestApiClient.saveTokens].
 class AuthResponse {
   const AuthResponse({
     required this.accessToken,
@@ -9,23 +72,52 @@ class AuthResponse {
     this.expiresIn,
     this.tokenType = 'Bearer',
     this.user,
+    this.loginResponse,
   });
 
-  /// JWT access token for API authorization
+  /// JWT access token extracted from the `Authentication` cookie.
   final String accessToken;
 
-  /// Refresh token for obtaining new access tokens
+  /// Refresh token extracted from the `Refresh` cookie.
   final String? refreshToken;
 
-  /// Token expiration time in seconds
+  /// Token expiration time in seconds (from `Max-Age` cookie attribute).
   final int? expiresIn;
 
-  /// Token type (usually "Bearer")
+  /// Token type (always "Bearer" — used when attaching to requests).
   final String tokenType;
 
-  /// User information (if included in response)
+  /// User information (optional, from response body or profile).
   final UserInfo? user;
 
+  /// Raw login response body (id, role, success).
+  /// Useful for downstream checks (e.g., role-based routing).
+  final LoginResponseDto? loginResponse;
+
+  /// Construct from the login response body + extracted cookie tokens.
+  ///
+  /// This is the primary factory used by [NestAuthRemoteDatasource].
+  factory AuthResponse.fromCookieAuth({
+    required LoginResponseDto body,
+    required String accessToken,
+    String? refreshToken,
+    int? maxAge,
+  }) {
+    return AuthResponse(
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      expiresIn: maxAge,
+      loginResponse: body,
+      user: UserInfo(
+        id: body.id.toString(),
+        email: '', // Email not in body — fetched later via /auth/profile
+        role: body.role,
+      ),
+    );
+  }
+
+  /// Legacy factory: parse from a JSON body that contains tokens directly.
+  /// Kept for backwards compatibility with other endpoints (register, refresh).
   factory AuthResponse.fromJson(Map<String, dynamic> json) {
     return AuthResponse(
       accessToken: json['accessToken'] as String? ??
@@ -50,20 +142,28 @@ class AuthResponse {
       if (expiresIn != null) 'expiresIn': expiresIn,
       'tokenType': tokenType,
       if (user != null) 'user': user!.toJson(),
+      if (loginResponse != null) 'loginResponse': loginResponse!.toJson(),
     };
   }
 
-  /// Check if the token is valid (not empty)
+  /// Whether this response contains a usable access token.
   bool get isValid => accessToken.isNotEmpty;
 
   @override
-  String toString() =>
-      'AuthResponse(accessToken: ${accessToken.substring(0, 10)}..., '
-      'hasRefreshToken: ${refreshToken != null})';
+  String toString() {
+    final tokenPreview = accessToken.length > 10
+        ? '${accessToken.substring(0, 10)}...'
+        : accessToken;
+    return 'AuthResponse(token: $tokenPreview, '
+        'hasRefresh: ${refreshToken != null}, '
+        'role: ${loginResponse?.role ?? user?.role ?? "?"})';
+  }
 }
 
-/// PATIENT APP: User Information Model
-///
+// ============================================================
+// User Information
+// ============================================================
+
 /// Basic user info returned with authentication.
 class UserInfo {
   const UserInfo({
@@ -82,7 +182,7 @@ class UserInfo {
 
   factory UserInfo.fromJson(Map<String, dynamic> json) {
     return UserInfo(
-      id: json['id'] as String? ?? json['_id'] as String? ?? '',
+      id: json['id']?.toString() ?? json['_id']?.toString() ?? '',
       email: json['email'] as String? ?? '',
       firstName: json['firstName'] as String? ?? json['first_name'] as String?,
       lastName: json['lastName'] as String? ?? json['last_name'] as String?,
@@ -108,4 +208,3 @@ class UserInfo {
   @override
   String toString() => 'UserInfo(id: $id, email: $email)';
 }
-

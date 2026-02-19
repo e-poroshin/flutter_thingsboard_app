@@ -41,7 +41,7 @@ abstract interface class INestAuthRepository {
 /// 3. Manages auth state
 
 class NestAuthRepository implements INestAuthRepository {
-  const NestAuthRepository({
+  NestAuthRepository({
     required this.datasource,
     required this.apiClient,
     required this.logger,
@@ -50,6 +50,12 @@ class NestAuthRepository implements INestAuthRepository {
   final INestAuthRemoteDatasource datasource;
   final NestApiClient apiClient;
   final TbLogger logger;
+
+  /// Cached login response (used as fallback when /auth/profile is unavailable).
+  AuthResponse? _lastLoginResponse;
+
+  /// The email used for the most recent successful login.
+  String? _lastLoginEmail;
 
   @override
   Future<AuthResponse> login(String email, String password) async {
@@ -70,6 +76,10 @@ class NestAuthRepository implements INestAuthRepository {
         accessToken: response.accessToken,
         refreshToken: response.refreshToken,
       );
+
+      // Cache login response for fallback profile construction
+      _lastLoginResponse = response;
+      _lastLoginEmail = email;
 
       logger.debug('NestAuthRepository: Login successful for $email');
       return response;
@@ -124,8 +134,10 @@ class NestAuthRepository implements INestAuthRepository {
       // Continue with local logout even if server call fails
     }
 
-    // Always clear local tokens
+    // Always clear local tokens and cached state
     await apiClient.clearTokens();
+    _lastLoginResponse = null;
+    _lastLoginEmail = null;
     logger.debug('NestAuthRepository: Logout complete');
   }
 
@@ -137,7 +149,46 @@ class NestAuthRepository implements INestAuthRepository {
   @override
   Future<UserProfileDTO> getProfile() async {
     logger.debug('NestAuthRepository: Fetching user profile');
-    return await datasource.getProfile();
+
+    try {
+      return await datasource.getProfile();
+    } on NestApiException catch (e) {
+      // ── Fallback: profile endpoint not available yet ──────────
+      // The backend may not have GET /auth/profile implemented yet.
+      // Construct a minimal UserProfileDTO from the login response
+      // so the app doesn't crash. Features requiring medplumPatientId
+      // or thingsboardDeviceId will gracefully degrade (skip remote
+      // data, sync stays dirty).
+      if (e.statusCode == 404) {
+        logger.warn(
+          'NestAuthRepository: /auth/profile returned 404 — '
+          'using fallback profile from login data. '
+          'Ask backend team to implement GET /auth/profile.',
+        );
+        return _buildFallbackProfile();
+      }
+      rethrow;
+    }
+  }
+
+  /// Build a minimal [UserProfileDTO] from the cached login response.
+  ///
+  /// This is a degraded mode: `medplumPatientId` and `thingsboardDeviceId`
+  /// will be null, so remote data features won't work until the backend
+  /// provides the real profile endpoint.
+  UserProfileDTO _buildFallbackProfile() {
+    final login = _lastLoginResponse?.loginResponse;
+    final user = _lastLoginResponse?.user;
+
+    return UserProfileDTO(
+      id: login?.id.toString() ?? user?.id ?? '0',
+      email: _lastLoginEmail ?? user?.email ?? '',
+      role: login?.role ?? user?.role,
+      // These are null — the profile endpoint would provide them.
+      // Without them: remote fetch skipped, telemetry push skipped.
+      medplumPatientId: null,
+      thingsboardDeviceId: null,
+    );
   }
 
   @override

@@ -20,6 +20,8 @@ import 'package:thingsboard_app/core/auth/login/select_region/model/region.dart'
 import 'package:thingsboard_app/core/auth/mock/mock_auth_helper.dart';
 import 'package:thingsboard_app/core/auth/oauth2/i_oauth2_client.dart';
 import 'package:thingsboard_app/core/context/tb_context_widget.dart';
+import 'package:thingsboard_app/core/network/nest_api_exceptions.dart';
+import 'package:thingsboard_app/modules/patient_health/data/repositories/nest_auth_repository.dart';
 import 'package:thingsboard_app/generated/l10n.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/patient_health/di/patient_health_di.dart';
@@ -664,9 +666,25 @@ class _LoginPageState extends TbPageState<LoginPage>
             email: username,
           );
         } else {
-          // Use real authentication
-          await tbClient.login(LoginRequest(username, password));
+          // PATIENT APP: Use NestJS BFF authentication (POST /api/patient/login).
+          // This sends credentials to the NestJS server, NOT ThingsBoard.
+          // Tokens are returned in HTTP-only cookies and saved by the repository.
+          log.debug('Login: Using NestJS BFF authentication');
+          final authRepo = getIt<INestAuthRepository>();
+          await authRepo.login(username, password);
+
+          // Tokens saved. Complete the login flow — sets auth state
+          // and navigates to /main, bypassing TB SDK auth entirely.
+          await tbContext.completeNestApiLogin();
         }
+      } on NestAuthException catch (e) {
+        // NestJS auth-specific error (invalid credentials, etc.)
+        _isLoginNotifier.value = false;
+        _overlayService.showErrorNotification((_) => e.message);
+      } on NestApiException catch (e) {
+        // NestJS API error (network, server, etc.)
+        _isLoginNotifier.value = false;
+        _overlayService.showErrorNotification((_) => e.message);
       } catch (e) {
         _isLoginNotifier.value = false;
         if (e is! ThingsboardError ||

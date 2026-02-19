@@ -5,6 +5,7 @@ import 'package:thingsboard_app/config/routes/router.dart';
 import 'package:thingsboard_app/config/themes/tb_theme.dart';
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
 import 'package:thingsboard_app/core/security/lifecycle_manager.dart';
+import 'package:thingsboard_app/core/services/sync/telemetry_sync_worker.dart';
 import 'package:thingsboard_app/generated/l10n.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/patient_health/di/patient_health_di.dart';
@@ -45,6 +46,19 @@ class _ThingsBoardAppState extends State<ThingsboardApp> {
 
     // Get the singleton bloc — DI is guaranteed to be initialized above
     _patientBloc = getIt<PatientBloc>();
+
+    // PATIENT APP: Start the Telemetry Sync Worker (production only).
+    // The worker flushes WAL (dirty BLE measurements) to the backend
+    // every 60 seconds. start() is idempotent — safe to call multiple times.
+    if (PatientHealthDi.isProductionMode) {
+      try {
+        getIt<TelemetrySyncWorker>().start();
+      } catch (e) {
+        getIt<TbLogger>().warn(
+          'ThingsboardApp: Could not start TelemetrySyncWorker: $e',
+        );
+      }
+    }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // Set device screen size

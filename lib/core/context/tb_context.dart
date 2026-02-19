@@ -9,6 +9,7 @@ import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:thingsboard_app/config/routes/router.dart';
 import 'package:thingsboard_app/core/context/tb_context_widget.dart';
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
+import 'package:thingsboard_app/core/network/nest_api_client.dart';
 import 'package:thingsboard_app/generated/l10n.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/version/route/version_route.dart';
@@ -29,6 +30,13 @@ part 'has_tb_context.dart';
 class TbContext implements PopEntry {
   bool isUserLoaded = false;
   final _isAuthenticated = ValueNotifier<bool>(false);
+
+  /// PATIENT APP: Flag indicating the user authenticated via NestJS BFF
+  /// (POST /api/patient/login) rather than the ThingsBoard SDK.
+  /// When true, TB-specific auth checks and service calls are bypassed.
+  bool _nestApiAuthenticated = false;
+  bool get isNestApiAuthenticated => _nestApiAuthenticated;
+
   List<TwoFaProviderInfo>? twoFactorAuthProviders;
   User? userDetails;
   HomeDashboardInfo? homeDashboard;
@@ -87,6 +95,18 @@ class TbContext implements PopEntry {
 
     log.debug('TbContext::init() endpoint: $endpoint');
 
+    // PATIENT APP: Check for existing NestJS session (app restart scenario).
+    // If NestJS tokens are stored, we'll skip TB-specific auth in onUserLoaded.
+    try {
+      _nestApiAuthenticated = await getIt<NestApiClient>().isAuthenticated();
+      if (_nestApiAuthenticated) {
+        log.debug('TbContext::init() Active NestJS session detected — '
+            'will bypass TB auth checks');
+      }
+    } catch (e) {
+      log.debug('TbContext::init() NestApiClient check skipped: $e');
+    }
+
     tbClient = ThingsboardClient(
       endpoint,
       storage: getIt(),
@@ -100,6 +120,26 @@ class TbContext implements PopEntry {
     try {
       await tbClient.init();
     } catch (e, s) {
+      // PATIENT APP: If NestJS auth is active, a TB init failure is expected
+      // (no TB credentials). Navigate to /main instead of showing fatal error.
+      if (_nestApiAuthenticated) {
+        log.debug('TbContext::init() TB init failed with NestJS auth active — '
+            'proceeding to main');
+        _isAuthenticated.value = true;
+        isUserLoaded = true;
+
+        // Cache patient layouts (same as completeNestApiLogin)
+        try {
+          getIt<ILayoutService>().cachePageLayouts(
+            null,
+            authority: Authority.CUSTOMER_USER,
+          );
+        } catch (_) {}
+
+        FlutterNativeSplash.remove();
+        await updateRouteState();
+        return;
+      }
       log.error('Failed to init tbContext: $e', e, s);
       await onFatalError(e);
     }
@@ -179,9 +219,55 @@ Future<bool> checkDasboardAccess(String id) async {
   Future<void> onUserLoaded({VoidCallback? onDone}) async {
     try {
       log.debug(
-        'TbContext.onUserLoaded: isAuthenticated=${tbClient.isAuthenticated()}',
+        'TbContext.onUserLoaded: isAuthenticated=${tbClient.isAuthenticated()}, '
+        'nestApiAuth=$_nestApiAuthenticated',
       );
       isUserLoaded = true;
+
+      // ── PATIENT APP: NestJS BFF Auth Path ──────────────────────
+      // If the user authenticated via NestJS (POST /api/patient/login),
+      // skip ALL ThingsBoard SDK-specific logic (role guard, mobile info,
+      // dashboard resolution). NestJS manages auth independently.
+      if (_nestApiAuthenticated) {
+        log.debug(
+          'TbContext.onUserLoaded: NestJS auth active — '
+          'bypassing TB checks, navigating to /main',
+        );
+        userDetails = null;
+        homeDashboard = null;
+        versionInfo = null;
+        storeInfo = null;
+        twoFactorAuthProviders = null;
+
+        _isAuthenticated.value = true;
+
+        // ── Cache patient page layouts ─────────────────────────────
+        // On app restart the layout cache is empty. Without this call
+        // LayoutPagesBloc receives an empty item list and MainPage
+        // shows a loading indicator forever ("endless loading" bug).
+        try {
+          getIt<ILayoutService>().cachePageLayouts(
+            null, // null → triggers default 3-tab patient layout
+            authority: Authority.CUSTOMER_USER,
+          );
+        } catch (e) {
+          log.warn('TbContext.onUserLoaded: layout cache failed: $e');
+        }
+
+        if (isAuthenticated) {
+          onDone?.call();
+        }
+
+        FlutterNativeSplash.remove();
+        if (_handleRootState) {
+          await updateRouteState();
+        }
+
+        // Skip Firebase notifications (not used with NestJS auth)
+        return;
+      }
+
+      // ── Standard ThingsBoard SDK Auth Path ─────────────────────
       if (tbClient.isAuthenticated() && !tbClient.isPreVerificationToken()) {
         log.debug('authUser: ${tbClient.getAuthUser()}');
 
@@ -356,6 +442,14 @@ Future<bool> checkDasboardAccess(String id) async {
     log.debug('TbContext::logout($requestConfig, $notifyUser)');
     _handleRootState = true;
 
+    // PATIENT APP: Clear NestJS auth state
+    _nestApiAuthenticated = false;
+    try {
+      await getIt<NestApiClient>().clearTokens();
+    } catch (e) {
+      log.debug('TbContext::logout() NestApiClient token clear skipped: $e');
+    }
+
     if (getIt<IFirebaseService>().apps.isNotEmpty) {
       await NotificationService(tbClient, log, this).logout();
     }
@@ -368,12 +462,31 @@ Future<bool> checkDasboardAccess(String id) async {
 
  Future<void> updateRouteState() async {
     log.debug(
-      'TbContext:updateRouteState() ${currentState != null && currentState!.mounted}',
+      'TbContext:updateRouteState() mounted=${currentState != null && currentState!.mounted}, '
+      'nestApiAuth=$_nestApiAuthenticated',
     );
+
+    // PATIENT APP: Check both NestJS BFF auth and ThingsBoard SDK auth.
+    // If NestJS auth is active, skip the TB isAuthenticated check entirely.
+    final isTbAuthenticated =
+        tbClient.isAuthenticated() && !tbClient.isPreVerificationToken();
     
-    if (!tbClient.isAuthenticated() || tbClient.isPreVerificationToken()) {
+    if (!_nestApiAuthenticated && !isTbAuthenticated) {
       thingsboardAppRouter.navigateTo(
         '/login',
+        replace: true,
+        clearStack: true,
+        transition: TransitionType.fadeIn,
+        transitionDuration: const Duration(milliseconds: 750),
+      );
+      return;
+    }
+
+    // PATIENT APP: NestJS auth has no TB dashboards or user details.
+    // Navigate directly to /main.
+    if (_nestApiAuthenticated && !isTbAuthenticated) {
+      thingsboardAppRouter.navigateTo(
+        '/main',
         replace: true,
         clearStack: true,
         transition: TransitionType.fadeIn,
@@ -413,6 +526,44 @@ Future<bool> checkDasboardAccess(String id) async {
       closeDashboard: false,
       clearStack: true,
       transition: TransitionType.none,
+    );
+  }
+
+  /// PATIENT APP: Complete login flow after successful NestJS BFF authentication.
+  ///
+  /// Called from the login page after [INestAuthRepository.login()] succeeds
+  /// and tokens are saved. Sets auth state, caches the patient-specific
+  /// bottom-bar layout, and navigates directly to `/main`, bypassing the
+  /// ThingsBoard SDK auth flow entirely.
+  Future<void> completeNestApiLogin() async {
+    log.debug('TbContext::completeNestApiLogin() — setting NestJS auth active');
+    _nestApiAuthenticated = true;
+    _isAuthenticated.value = true;
+    isUserLoaded = true;
+    _handleRootState = false; // Prevent onUserLoaded from re-navigating
+
+    // ── Cache patient page layouts ─────────────────────────────────
+    // The standard TB SDK path calls cachePageLayouts() inside
+    // onUserLoaded(). Since we bypass that, we must populate the
+    // layout cache here so LayoutPagesBloc has items to render.
+    try {
+      getIt<ILayoutService>().cachePageLayouts(
+        null, // null → triggers default layout for the given authority
+        authority: Authority.CUSTOMER_USER,
+      );
+    } catch (e) {
+      log.warn('TbContext::completeNestApiLogin() '
+          'layout cache failed: $e');
+    }
+
+    FlutterNativeSplash.remove();
+
+    thingsboardAppRouter.navigateTo(
+      '/main',
+      replace: true,
+      clearStack: true,
+      transition: TransitionType.fadeIn,
+      transitionDuration: const Duration(milliseconds: 750),
     );
   }
 

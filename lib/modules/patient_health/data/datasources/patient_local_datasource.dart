@@ -337,6 +337,59 @@ class PatientLocalDatasource {
     }
   }
 
+  /// Get all measurements that need to be synced to the backend.
+  ///
+  /// Returns items with [SyncStatus.dirty], sorted ascending by
+  /// timestamp (FIFO — oldest first) so the backend receives data
+  /// in chronological order.
+  ///
+  /// Used by [TelemetrySyncWorker] to flush the Write-Ahead Log.
+  Future<List<VitalHistoryHiveModel>> getDirtyMeasurements() async {
+    try {
+      if (_vitalHistoryBox == null || !_vitalHistoryBox!.isOpen) {
+        if (!Hive.isBoxOpen(_vitalHistoryBoxName)) {
+          _vitalHistoryBox =
+              await Hive.openBox<VitalHistoryHiveModel>(_vitalHistoryBoxName);
+        } else {
+          _vitalHistoryBox =
+              Hive.box<VitalHistoryHiveModel>(_vitalHistoryBoxName);
+        }
+      }
+
+      final dirtyItems = _vitalHistoryBox!.values
+          .where((m) => m.needsSync)
+          .toList()
+        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+      logger.debug(
+        'PatientLocalDatasource: Found ${dirtyItems.length} dirty measurements',
+      );
+
+      return dirtyItems;
+    } catch (e, s) {
+      logger.error(
+        'PatientLocalDatasource: Error getting dirty measurements',
+        e,
+        s,
+      );
+      return [];
+    }
+  }
+
+  /// Get count of unsynced measurements.
+  ///
+  /// Lightweight check for UI indicators (e.g., "5 pending uploads").
+  Future<int> getDirtyCount() async {
+    try {
+      if (_vitalHistoryBox == null || !_vitalHistoryBox!.isOpen) {
+        return 0;
+      }
+      return _vitalHistoryBox!.values.where((m) => m.needsSync).length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
   /// Clear all vital history data
   Future<void> clearVitalHistory() async {
     try {

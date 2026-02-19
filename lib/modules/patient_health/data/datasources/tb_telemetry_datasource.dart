@@ -29,6 +29,17 @@ abstract interface class ITbTelemetryDatasource {
   });
 
   // ==========================================================================
+  // Telemetry Sync (BLE → Backend)
+  // ==========================================================================
+
+  /// Push a BLE-collected measurement to the backend.
+  /// Endpoint: POST /api/proxy/telemetry
+  ///
+  /// Used by the WAL flush logic in [PatientRepositoryImpl] and
+  /// the [TelemetrySyncWorker] to upload sensor data.
+  Future<void> pushTelemetry(TelemetryRequestDto dto);
+
+  // ==========================================================================
   // Legacy Endpoints (for backwards compatibility / alternative API structure)
   // ==========================================================================
 
@@ -82,6 +93,19 @@ class TbTelemetryDatasource implements ITbTelemetryDatasource {
       ),
     );
     return TelemetryHistoryDTO.fromJson(response, deviceId: deviceId);
+  }
+
+  // ==========================================================================
+  // Telemetry Sync (BLE → Backend)
+  // ==========================================================================
+
+  @override
+  Future<void> pushTelemetry(TelemetryRequestDto dto) async {
+    // POST /api/proxy/telemetry
+    await apiClient.post<dynamic>(
+      NestApiConfig.proxyTelemetry,
+      data: dto.toJson(),
+    );
   }
 
   // ==========================================================================

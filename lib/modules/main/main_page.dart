@@ -32,9 +32,20 @@ class _MainPageState extends TbPageState<MainPage>
         builder: (context, state) {
           switch (state) {
             case BottomBarDataState():
+              // Guard: if items is empty, show a loading state instead
+              // of crashing on TabController(length: 0).
+              if (state.items.isEmpty) {
+                return const Scaffold(
+                  body: Center(
+                    child: TbProgressIndicator(size: 50),
+                  ),
+                );
+              }
+
+              // Clamp the current index to the valid range BEFORE
+              // creating the TabController.
               if (_currentIndexNotifier.value >= state.items.length) {
                 _currentIndexNotifier.value = state.items.length - 1;
-                _tabController.index = _currentIndexNotifier.value;
               }
 
               _tabController = TabController(
@@ -101,7 +112,14 @@ class _MainPageState extends TbPageState<MainPage>
       if (mounted) {
         try {
           orientation = MediaQuery.of(context).orientation;
-          NotificationService(tbClient, log, tbContext).updateNotificationsCount();
+
+          // PATIENT APP: Skip TB notification service when using NestJS auth.
+          // The TB SDK is not authenticated in NestJS-only mode, so calling
+          // getUnreadNotificationsCount() would throw "Unauthorized!".
+          if (!tbContext.isNestApiAuthenticated) {
+            NotificationService(tbClient, log, tbContext)
+                .updateNotificationsCount();
+          }
         } catch (e) {
           // Context may be invalid during widget tree transitions
           // Silently ignore to prevent crashes
@@ -115,7 +133,11 @@ class _MainPageState extends TbPageState<MainPage>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      NotificationService(tbClient, log, tbContext).updateNotificationsCount();
+      // PATIENT APP: Skip TB notifications when using NestJS auth.
+      if (!tbContext.isNestApiAuthenticated) {
+        NotificationService(tbClient, log, tbContext)
+            .updateNotificationsCount();
+      }
     }
   }
 

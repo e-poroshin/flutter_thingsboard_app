@@ -170,11 +170,14 @@ class _ProfilePageState extends TbContextState<ProfilePage>
 
   Widget _buildUserHeader() {
     final patient = _patientProfile;
-    final name = patient?.fullName ?? 'Patient';
+    // Use fullName if non-empty, otherwise fall back to 'Patient'
+    final rawName = patient?.fullName;
+    final name = (rawName != null && rawName.trim().isNotEmpty) ? rawName : 'Patient';
     // Use patient email from profile, or fallback to userDetails if available
-    final email = patient?.email ?? 
-        widget.tbContext.userDetails?.email ?? 
-        'No email';
+    final rawEmail = patient?.email;
+    final email = (rawEmail != null && rawEmail.trim().isNotEmpty)
+        ? rawEmail
+        : (widget.tbContext.userDetails?.email ?? 'No email');
     
     // Get initials from name
     final initials = _getInitials(name);
@@ -251,7 +254,9 @@ class _ProfilePageState extends TbContextState<ProfilePage>
   }
 
   String _getInitials(String name) {
-    final parts = name.trim().split(' ');
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return 'P';
+    final parts = trimmed.split(' ').where((p) => p.isNotEmpty).toList();
     if (parts.isEmpty) return 'P';
     if (parts.length == 1) return parts[0][0].toUpperCase();
     return '${parts[0][0]}${parts[parts.length - 1][0]}'.toUpperCase();

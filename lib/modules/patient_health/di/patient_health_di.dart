@@ -1,6 +1,7 @@
 import 'package:get_it/get_it.dart';
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
 import 'package:thingsboard_app/core/network/nest_api_client.dart';
+import 'package:thingsboard_app/core/services/sync/telemetry_sync_worker.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/patient_health/data/datasources/medplum_remote_datasource.dart';
 import 'package:thingsboard_app/modules/patient_health/data/datasources/nest_auth_remote_datasource.dart';
@@ -20,7 +21,7 @@ import 'package:thingsboard_app/thingsboard_client.dart';
 /// This ensures proper cleanup when the module is disposed.
 ///
 /// **Backend Configuration:**
-/// - Base URL: http://167.172.178.76:30003
+/// - Base URL: http://206.81.28.28:30003
 /// - Architecture: BFF (Backend for Frontend)
 /// - All API calls go through NestJS, which proxies to ThingsBoard/Medplum
 ///
@@ -32,17 +33,18 @@ import 'package:thingsboard_app/thingsboard_client.dart';
 /// - All datasources use NestApiClient to communicate with NestJS server
 /// - NestJS handles ThingsBoard/Medplum authentication server-side
 /// - App only stores NestJS JWT tokens
+/// - TelemetrySyncWorker flushes WAL (dirty BLE data) to backend
 
 class PatientHealthDi {
   PatientHealthDi._();
 
   /// Toggle between mock and real data sources
-  /// 
+  ///
   /// Set to `true` for UI development without backend
   /// Set to `false` when using the real NestJS BFF server
-  /// 
+  ///
   /// **IMPORTANT:** Set to `false` for production!
-  static const bool useMockData = true; // <-- SWITCHED TO MOCK MODE FOR UI DEVELOPMENT
+  static const bool useMockData = false; // ← PRODUCTION MODE
 
   /// Initialize the Patient Health module dependencies
   ///
@@ -50,6 +52,7 @@ class PatientHealthDi {
   /// - Datasources (Mock or NestJS BFF endpoints)
   /// - Repositories
   /// - BLoCs for state management
+  /// - TelemetrySyncWorker (production only)
   ///
   /// Note: [tbClient] is optional — mock mode doesn't need it,
   /// and production mode uses NestApiClient from the global scope.
@@ -154,12 +157,36 @@ class PatientHealthDi {
     );
 
     // Register Patient repository (real implementation with all datasources)
-    locator.registerLazySingleton<IPatientRepository>(
+    // Also registered as concrete type so TelemetrySyncWorker can access
+    // fetchUserProfile() which is not on the IPatientRepository interface.
+    locator.registerLazySingleton<PatientRepositoryImpl>(
       () => PatientRepositoryImpl(
         authDatasource: locator<INestAuthRemoteDatasource>(),
         medplumDatasource: locator<IMedplumRemoteDatasource>(),
         telemetryDatasource: locator<ITbTelemetryDatasource>(),
         localDatasource: locator<PatientLocalDatasource>(),
+        logger: logger,
+      ),
+    );
+
+    // Expose the same instance as IPatientRepository for BLoC/UI consumers
+    locator.registerLazySingleton<IPatientRepository>(
+      () => locator<PatientRepositoryImpl>(),
+    );
+
+    // ================================================================
+    // Background Services
+    // ================================================================
+
+    // Register Telemetry Sync Worker (WAL flush service)
+    // Credentials (deviceId, tenantId) are resolved dynamically at
+    // flush-time from PatientRepositoryImpl.fetchUserProfile(), so the
+    // worker can be created before the user logs in.
+    locator.registerLazySingleton<TelemetrySyncWorker>(
+      () => TelemetrySyncWorker(
+        localDatasource: locator<PatientLocalDatasource>(),
+        telemetryDatasource: locator<ITbTelemetryDatasource>(),
+        repository: locator<PatientRepositoryImpl>(),
         logger: logger,
       ),
     );
@@ -179,8 +206,16 @@ class PatientHealthDi {
 
   /// Dispose the Patient Health module dependencies
   ///
-  /// Closes BLoCs and drops the DI scope to free resources.
+  /// Closes BLoCs, stops the sync worker, and drops the DI scope
+  /// to free resources.
   static void dispose(String scopeName) {
+    // Stop the sync worker before dropping scope
+    if (!useMockData) {
+      try {
+        getIt<TelemetrySyncWorker>().dispose();
+      } catch (_) {}
+    }
+
     // Close BLoCs before dropping the scope
     try {
       getIt<PatientBloc>().close();
