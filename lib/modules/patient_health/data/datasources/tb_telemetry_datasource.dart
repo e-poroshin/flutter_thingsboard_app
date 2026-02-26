@@ -12,7 +12,8 @@ import 'package:thingsboard_app/modules/patient_health/data/models/models.dart';
 /// - NestJS handles ThingsBoard authentication with server-side credentials
 /// - NestJS fetches telemetry from ThingsBoard and returns to app
 ///
-/// **Required ID:** thingsboardDeviceId (obtained from GET /auth/profile)
+/// **Token-Based Identity:** The backend decodes the JWT token to identify
+/// the patient and resolve the appropriate device.
 
 abstract interface class ITbTelemetryDatasource {
   /// Fetch latest telemetry values for a device
@@ -64,7 +65,7 @@ class TbTelemetryDatasource implements ITbTelemetryDatasource {
   final NestApiClient apiClient;
 
   // ==========================================================================
-  // Real API Implementation (using thingsboardDeviceId)
+  // Real API Implementation (explicit device ID — for future use)
   // ==========================================================================
 
   @override

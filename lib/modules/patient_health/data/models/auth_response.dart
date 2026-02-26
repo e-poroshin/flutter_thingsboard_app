@@ -110,7 +110,7 @@ class AuthResponse {
       loginResponse: body,
       user: UserInfo(
         id: body.id.toString(),
-        email: '', // Email not in body — fetched later via /auth/profile
+        email: '', // Email not in body — fetched later via /patient/profile
         role: body.role,
       ),
     );

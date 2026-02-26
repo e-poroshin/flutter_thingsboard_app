@@ -339,7 +339,7 @@ class _ProfilePageState extends TbContextState<ProfilePage>
               const Divider(height: 1),
               ListTile(
                 title: const Text('Test Notification'),
-                subtitle: const Text('Test notification (5s delay)'),
+                subtitle: const Text('Test notification'),
                 leading: const Icon(Icons.notifications_active, color: Colors.blue),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _testNotification,
@@ -493,7 +493,7 @@ class _ProfilePageState extends TbContextState<ProfilePage>
       await notificationService.showImmediateNotification(
         998, // Different ID for immediate test
         'Immediate Test',
-        'If you see this, notifications work! Scheduled test in 5s...',
+        'If you see this, notifications work!',
       );
       
       // Then schedule a test notification in 5 seconds
@@ -513,8 +513,7 @@ class _ProfilePageState extends TbContextState<ProfilePage>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Immediate test shown! Scheduled test in 5 seconds.\n'
-              'Scheduled for: ${scheduledTime.toString().substring(11, 19)}',
+              'Immediate test shown!',
             ),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 6),

@@ -51,7 +51,7 @@ class NestAuthRepository implements INestAuthRepository {
   final NestApiClient apiClient;
   final TbLogger logger;
 
-  /// Cached login response (used as fallback when /auth/profile is unavailable).
+  /// Cached login response (used as fallback when /patient/profile is unavailable).
   AuthResponse? _lastLoginResponse;
 
   /// The email used for the most recent successful login.
@@ -154,16 +154,14 @@ class NestAuthRepository implements INestAuthRepository {
       return await datasource.getProfile();
     } on NestApiException catch (e) {
       // ── Fallback: profile endpoint not available yet ──────────
-      // The backend may not have GET /auth/profile implemented yet.
+      // The backend may not have GET /patient/profile implemented yet.
       // Construct a minimal UserProfileDTO from the login response
-      // so the app doesn't crash. Features requiring medplumPatientId
-      // or thingsboardDeviceId will gracefully degrade (skip remote
-      // data, sync stays dirty).
+      // so the app doesn't crash.
       if (e.statusCode == 404) {
         logger.warn(
-          'NestAuthRepository: /auth/profile returned 404 — '
+          'NestAuthRepository: /patient/profile returned 404 — '
           'using fallback profile from login data. '
-          'Ask backend team to implement GET /auth/profile.',
+          'Ask backend team to implement GET /patient/profile.',
         );
         return _buildFallbackProfile();
       }
@@ -173,9 +171,9 @@ class NestAuthRepository implements INestAuthRepository {
 
   /// Build a minimal [UserProfileDTO] from the cached login response.
   ///
-  /// This is a degraded mode: `medplumPatientId` and `thingsboardDeviceId`
-  /// will be null, so remote data features won't work until the backend
-  /// provides the real profile endpoint.
+  /// This is a degraded mode used when GET /patient/profile is not yet
+  /// implemented. The profile will have id, email, and role from the
+  /// login response.
   UserProfileDTO _buildFallbackProfile() {
     final login = _lastLoginResponse?.loginResponse;
     final user = _lastLoginResponse?.user;
@@ -184,10 +182,6 @@ class NestAuthRepository implements INestAuthRepository {
       id: login?.id.toString() ?? user?.id ?? '0',
       email: _lastLoginEmail ?? user?.email ?? '',
       role: login?.role ?? user?.role,
-      // These are null — the profile endpoint would provide them.
-      // Without them: remote fetch skipped, telemetry push skipped.
-      medplumPatientId: null,
-      thingsboardDeviceId: null,
     );
   }
 

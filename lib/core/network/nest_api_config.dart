@@ -64,16 +64,10 @@ class NestApiConfig {
   /// POST /auth/logout - Logout user
   static const String authLogout = '/auth/logout';
 
-  /// GET /auth/profile - Get current user profile
-  /// Returns: userId, medplumPatientId, thingsboardDeviceId
-  static const String authProfile = '/auth/profile';
-
-  // ============================================================
-  // User Endpoints
-  // ============================================================
-
-  /// GET /users/me - Alternative profile endpoint
-  static const String usersMe = '/users/me';
+  /// GET /patient/profile - Get current user profile
+  /// Backend decodes the JWT token to identify the patient.
+  /// Returns: userId, email, firstName, lastName, role, updatedAt
+  static const String authProfile = '/patient/profile';
 
   // ============================================================
   // Medplum (FHIR) Endpoints - Proxied through NestJS

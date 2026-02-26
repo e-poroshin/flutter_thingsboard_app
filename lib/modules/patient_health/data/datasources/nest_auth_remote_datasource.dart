@@ -18,8 +18,8 @@ import 'package:thingsboard_app/modules/patient_health/data/models/models.dart';
 ///    [NestApiClient.saveTokens].
 ///
 /// **Endpoints:**
-/// - POST /api/patient/login — Login with email/password (cookies)
-/// - GET  /auth/profile      — Get user profile with linked IDs
+/// - POST /api/patient/login  — Login with email/password (cookies)
+/// - GET  /patient/profile    — Get user profile (token-based identity)
 
 abstract interface class INestAuthRemoteDatasource {
   /// Login with email and password.
@@ -45,9 +45,9 @@ abstract interface class INestAuthRemoteDatasource {
   /// Endpoint: POST /auth/logout
   Future<void> logout();
 
-  /// Get current user profile with linked IDs
-  /// Endpoint: GET /auth/profile
-  /// Returns: userId, medplumPatientId, thingsboardDeviceId
+  /// Get current user profile (token-based identity)
+  /// Endpoint: GET /patient/profile
+  /// Returns: userId, email, firstName, lastName, role, updatedAt
   Future<UserProfileDTO> getProfile();
 }
 

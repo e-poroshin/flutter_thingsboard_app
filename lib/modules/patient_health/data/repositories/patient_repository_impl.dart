@@ -32,12 +32,12 @@ typedef LegacyVitalSignType = VitalSignType;
 /// - ThingsBoard for IoT device telemetry (vital signs from wearables)
 /// - Medplum for FHIR clinical data (observations, conditions)
 ///
-/// **Architecture:**
+/// **Architecture (Token-Based Identity):**
 /// - All data flows through NestJS BFF
-/// - Repository fetches linked IDs from user profile first
-/// - Uses medplumPatientId for FHIR data
-/// - Uses thingsboardDeviceId for telemetry data
-/// - Falls back to legacy endpoints if IDs not available
+/// - The backend decodes the JWT token to identify the patient
+/// - The mobile client does NOT need medplumPatientId or thingsboardDeviceId
+/// - All endpoints use token-authenticated routes (e.g., /patient/profile)
+/// - Device info will be available via a separate endpoint (TODO)
 
 class PatientRepositoryImpl implements IPatientRepository {
   PatientRepositoryImpl({
@@ -54,7 +54,7 @@ class PatientRepositoryImpl implements IPatientRepository {
   final PatientLocalDatasource localDatasource;
   final TbLogger? logger;
 
-  /// Cached user profile (contains linked IDs)
+  /// Cached user profile
   UserProfileDTO? _cachedProfile;
 
   /// Completer to deduplicate concurrent fetchUserProfile() calls.
@@ -69,8 +69,7 @@ class PatientRepositoryImpl implements IPatientRepository {
   // Profile Management
   // ============================================================
 
-  /// Fetch and cache the user profile
-  /// This MUST be called first to get medplumPatientId and thingsboardDeviceId
+  /// Fetch and cache the user profile.
   ///
   /// Uses a [Completer] to deduplicate concurrent calls — if three callers
   /// call this at the same time, only one HTTP request is made and the
@@ -97,15 +96,12 @@ class PatientRepositoryImpl implements IPatientRepository {
         // ── Fallback: profile endpoint not available yet ──────────
         if (e.statusCode == 404) {
           logger?.warn(
-            'PatientRepositoryImpl: /auth/profile returned 404 — '
-            'using minimal fallback profile. '
-            'Remote data features will be unavailable.',
+            'PatientRepositoryImpl: /patient/profile returned 404 — '
+            'using minimal fallback profile.',
           );
           profile = const UserProfileDTO(
             id: '0',
             email: '',
-            medplumPatientId: null,
-            thingsboardDeviceId: null,
           );
         } else {
           rethrow;
@@ -115,9 +111,9 @@ class PatientRepositoryImpl implements IPatientRepository {
       _cachedProfile = profile;
 
       logger?.debug(
-        'PatientRepositoryImpl: Profile loaded - '
-        'medplumPatientId: ${_cachedProfile?.medplumPatientId}, '
-        'thingsboardDeviceId: ${_cachedProfile?.thingsboardDeviceId}',
+        'PatientRepositoryImpl: Profile loaded — '
+        'id: ${profile.id}, email: ${profile.email}, '
+        'role: ${profile.role}',
       );
 
       _profileCompleter!.complete(profile);
@@ -141,25 +137,14 @@ class PatientRepositoryImpl implements IPatientRepository {
 
   @override
   Future<PatientEntity> getPatientProfile() async {
-    // Step 1: Ensure we have the user profile with linked IDs
+    // Ensure we have the user profile cached
     final userProfile = await fetchUserProfile();
 
-    // Step 2: Use medplumPatientId if available, otherwise fall back to legacy
     try {
-      if (userProfile.hasMedplumPatient) {
-        logger?.debug(
-          'PatientRepositoryImpl: Fetching Medplum patient ${userProfile.medplumPatientId}',
-        );
-        final medplumPatient = await medplumDatasource.fetchPatient(
-          userProfile.medplumPatientId!,
-        );
-        return _mapMedplumPatientToEntity(medplumPatient, userProfile);
-      } else {
-        // Fallback to legacy endpoint
-        logger?.debug('PatientRepositoryImpl: Using legacy patient profile endpoint');
-        final profileData = await medplumDatasource.fetchPatientProfile();
-        return _parsePatientEntity(profileData, userProfile);
-      }
+      // Use the token-authenticated endpoint — backend resolves patient from JWT
+      logger?.debug('PatientRepositoryImpl: Fetching patient profile');
+      final profileData = await medplumDatasource.fetchPatientProfile();
+      return _parsePatientEntity(profileData, userProfile);
     } on NestApiException catch (e) {
       if (e.statusCode == 404) {
         logger?.warn(
@@ -184,25 +169,14 @@ class PatientRepositoryImpl implements IPatientRepository {
 
   @override
   Future<List<VitalSignEntity>> getLatestVitals() async {
-    // Step 1: Ensure we have the user profile with linked IDs
-    final userProfile = await fetchUserProfile();
+    // Ensure we have the user profile cached
+    await fetchUserProfile();
 
-    // Step 2: Use thingsboardDeviceId if available, otherwise fall back to legacy
     try {
-      if (userProfile.hasThingsboardDevice) {
-        logger?.debug(
-          'PatientRepositoryImpl: Fetching telemetry for device ${userProfile.thingsboardDeviceId}',
-        );
-        final telemetry = await telemetryDatasource.fetchLatestTelemetry(
-          userProfile.thingsboardDeviceId!,
-        );
-        return _mapTelemetryToVitals(telemetry);
-      } else {
-        // Fallback to legacy endpoint
-        logger?.debug('PatientRepositoryImpl: Using legacy vitals endpoint');
-        final vitalsData = await telemetryDatasource.fetchLatestVitals();
-        return _parseVitalSignEntities(vitalsData);
-      }
+      // Use the token-authenticated endpoint — backend resolves device from JWT
+      logger?.debug('PatientRepositoryImpl: Fetching latest vitals');
+      final vitalsData = await telemetryDatasource.fetchLatestVitals();
+      return _parseVitalSignEntities(vitalsData);
     } on NestApiException catch (e) {
       if (e.statusCode == 404) {
         logger?.warn(
@@ -424,43 +398,39 @@ class PatientRepositoryImpl implements IPatientRepository {
     // ── Step 1: Fetch Remote observations from Medplum ──────────
     List<VitalHistoryPoint> remotePoints = [];
     try {
-      final profile = await fetchUserProfile();
+      final loincCode = _vitalIdToLoincCode(vitalId);
 
-      if (profile.hasMedplumPatient) {
-        final loincCode = _vitalIdToLoincCode(vitalId);
+      if (loincCode != null) {
+        logger?.debug(
+          'PatientRepositoryImpl: Fetching remote observations for '
+          '$vitalId (LOINC: $loincCode) since $since',
+        );
 
-        if (loincCode != null) {
-          logger?.debug(
-            'PatientRepositoryImpl: Fetching remote observations for '
-            '$vitalId (LOINC: $loincCode) since $since',
-          );
+        // Backend resolves patient from JWT token — no patientId needed
+        final observations =
+            await medplumDatasource.fetchObservationsByCode(
+          code: loincCode,
+          from: since,
+          to: now,
+        );
 
-          final observations =
-              await medplumDatasource.fetchObservationsByCode(
-            profile.medplumPatientId!,
-            code: loincCode,
-            from: since,
-            to: now,
-          );
+        remotePoints = observations
+            .where((obs) => obs.numericValue != null)
+            .map((obs) => VitalHistoryPoint(
+                  timestamp: obs.effectiveDateTime ?? now,
+                  value: obs.numericValue!,
+                ))
+            .toList();
 
-          remotePoints = observations
-              .where((obs) => obs.numericValue != null)
-              .map((obs) => VitalHistoryPoint(
-                    timestamp: obs.effectiveDateTime ?? now,
-                    value: obs.numericValue!,
-                  ))
-              .toList();
-
-          logger?.debug(
-            'PatientRepositoryImpl: Got ${remotePoints.length} remote '
-            'points for $vitalId',
-          );
-        } else {
-          logger?.debug(
-            'PatientRepositoryImpl: No LOINC mapping for "$vitalId", '
-            'skipping remote fetch',
-          );
-        }
+        logger?.debug(
+          'PatientRepositoryImpl: Got ${remotePoints.length} remote '
+          'points for $vitalId',
+        );
+      } else {
+        logger?.debug(
+          'PatientRepositoryImpl: No LOINC mapping for "$vitalId", '
+          'skipping remote fetch',
+        );
       }
     } catch (e) {
       logger?.warn(
@@ -611,29 +581,29 @@ class PatientRepositoryImpl implements IPatientRepository {
     try {
       final profile = await fetchUserProfile();
 
-      if (profile.hasThingsboardDevice) {
-        final dto = TelemetryRequestDto.fromHiveModel(
-          model: measurement,
-          deviceId: profile.thingsboardDeviceId!,
-          tenantId: profile.id, // tenant derived from user profile
-        );
+      // Build DTO — deviceId/tenantId are optional. The backend may
+      // resolve the device from the JWT token. Once the
+      // GET /patient/{id}/devices endpoint is available, we can fetch
+      // the device list and use the correct ID.
+      final dto = TelemetryRequestDto(
+        deviceId: null,
+        tenantId: null,
+        timestamp: measurement.timestamp.toUtc().toIso8601String(),
+        data: {
+          TelemetryRequestDto.normalizeVitalKey(vitalType): value,
+        },
+      );
 
-        await telemetryDatasource.pushTelemetry(dto);
+      await telemetryDatasource.pushTelemetry(dto);
 
-        // ── WAL Step 3a: Mark synced ──────────────────────────────
-        measurement.syncStatus = SyncStatus.synced;
-        await measurement.save(); // HiveObject.save() updates in-place
+      // ── WAL Step 3a: Mark synced ──────────────────────────────
+      measurement.syncStatus = SyncStatus.synced;
+      await measurement.save(); // HiveObject.save() updates in-place
 
-        logger?.debug(
-          'PatientRepositoryImpl: Measurement pushed & synced '
-          '($vitalType = $value)',
-        );
-      } else {
-        logger?.debug(
-          'PatientRepositoryImpl: No thingsboardDeviceId — '
-          'measurement saved locally as dirty',
-        );
-      }
+      logger?.debug(
+        'PatientRepositoryImpl: Measurement pushed & synced '
+        '($vitalType = $value, userId: ${profile.id})',
+      );
     } catch (e) {
       // ── WAL Step 3b: Leave as dirty ─────────────────────────────
       // Network/server error — the TelemetrySyncWorker will retry.
@@ -658,26 +628,15 @@ class PatientRepositoryImpl implements IPatientRepository {
     required DateTime endDate,
     List<String>? keys,
   }) async {
-    final userProfile = await fetchUserProfile();
-
     try {
-      if (userProfile.hasThingsboardDevice) {
-        final history = await telemetryDatasource.fetchTelemetryHistory(
-          userProfile.thingsboardDeviceId!,
-          startTs: startDate.millisecondsSinceEpoch,
-          endTs: endDate.millisecondsSinceEpoch,
-          keys: keys,
-        );
-        return _mapTelemetryHistoryToVitals(history);
-      } else {
-        // Fallback to legacy endpoint
-        final historyData = await telemetryDatasource.fetchVitalsHistory(
-          startTs: startDate.millisecondsSinceEpoch,
-          endTs: endDate.millisecondsSinceEpoch,
-          keys: keys,
-        );
-        return _parseVitalsHistoryData(historyData);
-      }
+      // Use token-authenticated endpoint
+      logger?.debug('PatientRepositoryImpl: Fetching vitals history');
+      final historyData = await telemetryDatasource.fetchVitalsHistory(
+        startTs: startDate.millisecondsSinceEpoch,
+        endTs: endDate.millisecondsSinceEpoch,
+        keys: keys,
+      );
+      return _parseVitalsHistoryData(historyData);
     } on NestApiException catch (e) {
       if (e.statusCode == 404) {
         logger?.warn(
@@ -692,16 +651,9 @@ class PatientRepositoryImpl implements IPatientRepository {
 
   /// Get patient's clinical observations from Medplum (raw data)
   Future<List<Map<String, dynamic>>> _fetchClinicalObservationsRaw() async {
-    final userProfile = await fetchUserProfile();
-
     try {
-      if (userProfile.hasMedplumPatient) {
-        return await medplumDatasource.fetchObservations(
-          userProfile.medplumPatientId!,
-        );
-      } else {
-        return await medplumDatasource.fetchPatientObservations();
-      }
+      // Use token-authenticated endpoint — backend resolves patient from JWT
+      return await medplumDatasource.fetchPatientObservations();
     } on NestApiException catch (e) {
       if (e.statusCode == 404) {
         logger?.warn(
@@ -724,48 +676,36 @@ class PatientRepositoryImpl implements IPatientRepository {
 
   /// Get patient's conditions from Medplum
   Future<List<Map<String, dynamic>>> getConditions() async {
-    final userProfile = await fetchUserProfile();
-
-    if (userProfile.hasMedplumPatient) {
-      try {
-        return await medplumDatasource.fetchConditions(
-          userProfile.medplumPatientId!,
+    try {
+      // Use token-authenticated endpoint — backend resolves patient from JWT
+      return await medplumDatasource.fetchPatientConditions();
+    } on NestApiException catch (e) {
+      if (e.statusCode == 404) {
+        logger?.warn(
+          'PatientRepositoryImpl: Conditions endpoint returned 404 — '
+          'returning empty list.',
         );
-      } on NestApiException catch (e) {
-        if (e.statusCode == 404) {
-          logger?.warn(
-            'PatientRepositoryImpl: Conditions endpoint returned 404 — '
-            'returning empty list.',
-          );
-          return [];
-        }
-        rethrow;
+        return [];
       }
+      rethrow;
     }
-    return [];
   }
 
   /// Get patient's medications from Medplum
   Future<List<Map<String, dynamic>>> getMedications() async {
-    final userProfile = await fetchUserProfile();
-
-    if (userProfile.hasMedplumPatient) {
-      try {
-        return await medplumDatasource.fetchMedications(
-          userProfile.medplumPatientId!,
+    try {
+      // Use token-authenticated endpoint — backend resolves patient from JWT
+      return await medplumDatasource.fetchPatientMedications();
+    } on NestApiException catch (e) {
+      if (e.statusCode == 404) {
+        logger?.warn(
+          'PatientRepositoryImpl: Medications endpoint returned 404 — '
+          'returning empty list.',
         );
-      } on NestApiException catch (e) {
-        if (e.statusCode == 404) {
-          logger?.warn(
-            'PatientRepositoryImpl: Medications endpoint returned 404 — '
-            'returning empty list.',
-          );
-          return [];
-        }
-        rethrow;
+        return [];
       }
+      rethrow;
     }
-    return [];
   }
 
   // ============================================================
@@ -783,7 +723,6 @@ class PatientRepositoryImpl implements IPatientRepository {
     logger?.debug('PatientRepositoryImpl: Getting health summary');
 
     // ── Pre-fetch user profile once (deduplication via Completer) ───
-    // This avoids 3–4 parallel calls to /auth/profile.
     await fetchUserProfile();
 
     // ── Fetch each data source independently ───────────────────────
@@ -849,8 +788,6 @@ class PatientRepositoryImpl implements IPatientRepository {
               const UserProfileDTO(
                 id: '0',
                 email: '',
-                medplumPatientId: null,
-                thingsboardDeviceId: null,
               ),
         );
 

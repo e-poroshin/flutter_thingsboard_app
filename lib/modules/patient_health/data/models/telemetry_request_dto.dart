@@ -7,30 +7,37 @@ import 'package:thingsboard_app/modules/patient_health/data/models/vital_history
 /// Sends BLE sensor measurements to the SmartBean Proxy,
 /// which forwards them to ThingsBoard as device telemetry.
 ///
+/// **Token-Based Identity:**
+/// The backend decodes the JWT token to identify the patient.
+/// `deviceId` and `tenantId` are optional — the backend can
+/// resolve the device from the token. Once the
+/// `GET /patient/{id}/devices` endpoint is available, the client
+/// can fetch the device list and populate these fields.
+///
 /// **Swagger contract:**
 /// ```json
 /// {
-///   "deviceId": "...",
-///   "tenantId": "...",
+///   "deviceId": "..." (optional — backend resolves from token),
+///   "tenantId": "..." (optional — backend resolves from token),
 ///   "timestamp": "2026-02-18T10:30:00.000Z",
 ///   "data": { "temperature": 36.6 }
 /// }
 /// ```
 class TelemetryRequestDto {
   const TelemetryRequestDto({
-    required this.deviceId,
-    required this.tenantId,
+    this.deviceId,
+    this.tenantId,
     required this.timestamp,
     required this.data,
   });
 
-  /// ThingsBoard Device ID
-  /// Obtained from `UserProfileDTO.thingsboardDeviceId`.
-  final String deviceId;
+  /// ThingsBoard Device ID (optional — backend may resolve from token)
+  ///
+  /// TODO: Fetch from GET /patient/{id}/devices when available.
+  final String? deviceId;
 
-  /// ThingsBoard Tenant ID
-  /// Obtained from backend config or user profile.
-  final String tenantId;
+  /// ThingsBoard Tenant ID (optional — backend may resolve from token)
+  final String? tenantId;
 
   /// ISO 8601 UTC timestamp of the measurement
   /// Example: `"2026-02-18T10:30:00.000Z"`
@@ -52,9 +59,10 @@ class TelemetryRequestDto {
   // ============================================================
 
   /// Serialize to JSON for the POST request body.
+  /// Only includes `deviceId` and `tenantId` if they are non-null.
   Map<String, dynamic> toJson() => {
-        'deviceId': deviceId,
-        'tenantId': tenantId,
+        if (deviceId != null) 'deviceId': deviceId,
+        if (tenantId != null) 'tenantId': tenantId,
         'timestamp': timestamp,
         'data': data,
       };
@@ -62,8 +70,8 @@ class TelemetryRequestDto {
   /// Deserialize from JSON (e.g. for unit tests or echo responses).
   factory TelemetryRequestDto.fromJson(Map<String, dynamic> json) {
     return TelemetryRequestDto(
-      deviceId: json['deviceId'] as String? ?? '',
-      tenantId: json['tenantId'] as String? ?? '',
+      deviceId: json['deviceId'] as String?,
+      tenantId: json['tenantId'] as String?,
       timestamp: json['timestamp'] as String? ?? '',
       data: (json['data'] as Map<String, dynamic>?) ?? {},
     );
@@ -83,8 +91,8 @@ class TelemetryRequestDto {
   /// ThingsBoard.
   factory TelemetryRequestDto.fromHiveModel({
     required VitalHistoryHiveModel model,
-    required String deviceId,
-    required String tenantId,
+    String? deviceId,
+    String? tenantId,
   }) {
     return TelemetryRequestDto(
       deviceId: deviceId,
@@ -104,8 +112,8 @@ class TelemetryRequestDto {
   factory TelemetryRequestDto.fromBleReading({
     required double temperature,
     required double humidity,
-    required String deviceId,
-    required String tenantId,
+    String? deviceId,
+    String? tenantId,
     DateTime? timestamp,
   }) {
     final ts = (timestamp ?? DateTime.now()).toUtc();
@@ -125,8 +133,8 @@ class TelemetryRequestDto {
   /// Useful if the backend supports array payloads in the future.
   static List<TelemetryRequestDto> fromHiveModels({
     required List<VitalHistoryHiveModel> models,
-    required String deviceId,
-    required String tenantId,
+    String? deviceId,
+    String? tenantId,
   }) {
     return models
         .map((model) => TelemetryRequestDto.fromHiveModel(
